@@ -39,8 +39,8 @@ Forum is a revolutionary decentralized voting platform that combines cutting-edg
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/forum-protocol/nfc-pass-v2.git
-   cd nfc-pass-v2
+   git clone https://github.com/forum-online-protocol/mobile-app.git
+   cd mobile-app
    ```
 
 2. **Install dependencies**
