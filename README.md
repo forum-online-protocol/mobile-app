@@ -139,14 +139,6 @@ npm run build:android # Build Android APK
 npm run build:ios     # Build iOS app
 ```
 
-### API Integration
-The app connects to the Forum API at: `https://forum-api-production-42de.up.railway.app`
-
-Key endpoints:
-- `/posts/feed` - Get voting proposals
-- `/auth/verify` - Passport verification
-- `/votes/submit` - Submit anonymous votes
-
 ## Supported Features
 
 ### Identity Verification
