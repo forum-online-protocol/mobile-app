@@ -7,6 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import en from './translations/en.json';
 import ru from './translations/ru.json';
 import ua from './translations/ua.json';
+import ro from './translations/ro.json';
 
 const STORAGE_KEY = 'user_language';
 
@@ -14,7 +15,8 @@ const STORAGE_KEY = 'user_language';
 export const supportedLanguages = {
   en: 'English',
   ru: 'Русский',
-  ua: 'Українська'
+  ua: 'Українська',
+  ro: 'Română'
 };
 
 // Get device language using React Native's built-in locale detection
@@ -68,7 +70,8 @@ const initializeI18n = async () => {
         resources: {
           en: { translation: en },
           ru: { translation: ru },
-          ua: { translation: ua }
+          ua: { translation: ua },
+          ro: { translation: ro }
         },
         lng: initialLanguage,
         fallbackLng: 'en',
@@ -90,7 +93,7 @@ const initializeI18n = async () => {
         returnEmptyString: false,
         returnNull: false,
         parseMissingKeyHandler: false
-      });
+  } as any);
 
     console.log('i18n initialized with language:', initialLanguage);
   } catch (error) {
@@ -103,7 +106,8 @@ const initializeI18n = async () => {
         resources: {
           en: { translation: en },
           ru: { translation: ru },
-          ua: { translation: ua }
+          ua: { translation: ua },
+          ro: { translation: ro }
         },
         lng: 'en',
         fallbackLng: 'en',
@@ -117,7 +121,7 @@ const initializeI18n = async () => {
         returnEmptyString: false,
         returnNull: false,
         parseMissingKeyHandler: false
-      });
+  } as any);
   }
 };
 
