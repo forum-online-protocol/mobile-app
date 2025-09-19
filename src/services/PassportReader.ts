@@ -1,4 +1,4 @@
-import { NativeModules, NativeEventEmitter, Platform } from 'react-native';
+import { NativeModules, NativeEventEmitter, DeviceEventEmitter, Platform } from 'react-native';
 
 const { PassportReader } = NativeModules;
 
@@ -26,8 +26,20 @@ class PassportReaderService {
   private eventEmitter: NativeEventEmitter | null = null;
 
   constructor() {
+    // Prefer NativeEventEmitter only if the native module exposes the required
+    // addListener/removeListeners methods. If not, fall back to DeviceEventEmitter
+    // on Android to avoid the console warning about missing methods.
     if (Platform.OS === 'android' && PassportReader) {
-      this.eventEmitter = new NativeEventEmitter(PassportReader);
+      const hasEmitterMethods =
+        typeof PassportReader.addListener === 'function' &&
+        typeof PassportReader.removeListeners === 'function';
+
+      if (hasEmitterMethods) {
+        this.eventEmitter = new NativeEventEmitter(PassportReader);
+      } else {
+        // Leave eventEmitter null and use DeviceEventEmitter when subscribing.
+        this.eventEmitter = null;
+      }
     }
   }
 
@@ -46,25 +58,36 @@ class PassportReaderService {
 
     return new Promise((resolve, reject) => {
       // Set up event listeners
-      const successListener = this.eventEmitter?.addListener(
-        'passportReadSuccess',
-        (data: PassportData) => {
-          // Clean up listeners
-          successListener?.remove();
-          errorListener?.remove();
-          resolve(data);
-        }
-      );
+      // Subscribe using NativeEventEmitter when available, otherwise use DeviceEventEmitter
+      let successListener: any = null;
+      let errorListener: any = null;
 
-      const errorListener = this.eventEmitter?.addListener(
-        'passportReadError',
-        (error: { code: string; message: string }) => {
-          // Clean up listeners
-          successListener?.remove();
-          errorListener?.remove();
+      if (this.eventEmitter) {
+        successListener = this.eventEmitter.addListener('passportReadSuccess', (data: PassportData) => {
+          successListener.remove();
+          errorListener.remove();
+          resolve(data);
+        });
+
+        errorListener = this.eventEmitter.addListener('passportReadError', (error: { code: string; message: string }) => {
+          successListener.remove();
+          errorListener.remove();
           reject(new Error(`${error.code}: ${error.message}`));
-        }
-      );
+        });
+      } else {
+        // DeviceEventEmitter is Android-only and does not require a native module
+        successListener = DeviceEventEmitter.addListener('passportReadSuccess', (data: PassportData) => {
+          successListener.remove();
+          errorListener.remove();
+          resolve(data);
+        });
+
+        errorListener = DeviceEventEmitter.addListener('passportReadError', (error: { code: string; message: string }) => {
+          successListener.remove();
+          errorListener.remove();
+          reject(new Error(`${error.code}: ${error.message}`));
+        });
+      }
 
       // Start the passport scan
       PassportReader.startPassportScan(documentNumber, dateOfBirth, dateOfExpiry)

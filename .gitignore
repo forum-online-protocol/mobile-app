@@ -247,7 +247,6 @@ obj/
 # Keystore files
 *.jks
 *.keystore
-!android/app/debug.keystore
 
 # Fastlane
 fastlane/report.xml
