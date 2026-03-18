@@ -91,7 +91,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm run hash:android:release | tee SHA256SUMS.txt
+          node scripts/hash-android-release.js | tee SHA256SUMS.txt
 
       - name: Prepare distribution files
         shell: bash
