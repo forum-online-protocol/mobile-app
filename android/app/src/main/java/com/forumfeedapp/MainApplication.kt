@@ -12,6 +12,7 @@ import com.facebook.react.shell.MainReactPackage
 import com.facebook.soloader.SoLoader
 import com.reactnativecommunity.asyncstorage.AsyncStoragePackage
 import community.revteltech.nfc.NfcManagerPackage
+import com.forumonline.nfcpass.BuildConfig
 
 class MainApplication : Application(), ReactApplication {
 
