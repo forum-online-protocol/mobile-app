@@ -14,6 +14,13 @@ export interface MerkleTreeResult {
   combinations: string[];
 }
 
+export interface PassportBoundTreeResult {
+  tree: MerkleTree;
+  root: string;
+  leaf: string;
+  combination: string;
+}
+
 export class MerkleEligibilityService {
   
   // Generate all valid (age, country) combinations
@@ -80,6 +87,29 @@ export class MerkleEligibilityService {
       leaf,
       root,
       combination: userCombination
+    };
+  }
+
+  // Create a single-leaf tree for an exact (ageRange, country) attestation.
+  createPassportBoundTree(ageRange: number, country: string): PassportBoundTreeResult {
+    const normalizedAgeRange = Number(ageRange);
+    const normalizedCountry = String(country || '').trim().toUpperCase();
+    const combination = `${normalizedAgeRange}_${normalizedCountry}`;
+    const leaf = ethers.keccak256(ethers.toUtf8Bytes(combination));
+    const tree = new MerkleTree([leaf], ethers.keccak256, { sortPairs: true });
+    const root = tree.getHexRoot();
+    return { tree, root, leaf, combination };
+  }
+
+  // Generate proof for exact passport-bound tuple.
+  generatePassportBoundProof(ageRange: number, country: string): EligibilityProof {
+    const { tree, root, leaf, combination } = this.createPassportBoundTree(ageRange, country);
+    const proof = tree.getHexProof(leaf);
+    return {
+      proof,
+      leaf,
+      root,
+      combination,
     };
   }
   

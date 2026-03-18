@@ -40,8 +40,8 @@
 -keep class * extends javax.crypto.BadPaddingException { *; }
 
 # Keep passport-related classes
--keep class com.forumfeedapp.passport.** { *; }
--keepclassmembers class com.forumfeedapp.passport.** { *; }
+-keep class com.forumonline.nfcpass.passport.** { *; }
+-keepclassmembers class com.forumonline.nfcpass.passport.** { *; }
 
 # JMRTD specific
 -keepattributes Exceptions,InnerClasses,Signature,Deprecated,SourceFile,LineNumberTable,*Annotation*,EnclosingMethod
@@ -95,8 +95,8 @@
 -keepclassmembers class android.nfc.tech.IsoDep { *; }
 
 # Keep our custom NFC service
--keep class com.forumfeedapp.passport.AndroidNfcCardService { *; }
--keepclassmembers class com.forumfeedapp.passport.AndroidNfcCardService {
+-keep class com.forumonline.nfcpass.passport.AndroidNfcCardService { *; }
+-keepclassmembers class com.forumonline.nfcpass.passport.AndroidNfcCardService {
     <init>(...);
     public <methods>;
     private <methods>;

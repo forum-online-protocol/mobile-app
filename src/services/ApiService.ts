@@ -1,17 +1,31 @@
-import { Platform } from 'react-native';
-import { ethers } from 'ethers';
-import { UserProfile } from '../types';
+import { Platform } from "react-native";
+import { ethers } from "ethers";
+import { UserProfile } from "../types";
+import i18n from "../localization/i18n";
+import AsyncStorageService from "./AsyncStorageService";
+import {
+  getPostDisplayContent,
+  getPostDisplayTitle,
+  normalizeAppLanguage,
+} from "../utils/localizedPost";
+import {
+  buildRegistrationIntent,
+  RegistrationIntent,
+} from "../utils/registrationIntent";
 
 // API Configuration
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://forum-api-production-42de.up.railway.app';
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL ||
+  process.env.REACT_APP_API_URL ||
+  "https://dev-api.votta.vote";
 const API_TIMEOUT = 30000; // 30 seconds
 
 // EIP-712 Domain
 const EIP712_DOMAIN = {
-  name: 'NFC Reader Platform',
-  version: '1',
+  name: "NFC Reader Platform",
+  version: "1",
   chainId: 11155111, // Sepolia
-  verifyingContract: '0x0000000000000000000000000000000000000000'
+  verifyingContract: "0x0000000000000000000000000000000000000000",
 };
 
 // Response interfaces
@@ -20,10 +34,16 @@ interface ApiResponse<T = any> {
   data?: T;
   error?: string;
   message?: string;
+  fromCache?: boolean;
+  isStale?: boolean;
+  serverResponse?: any;
 }
 
 interface Post {
   id: string;
+  title?: string;
+  legacySource?: string;
+  isReadOnlyLegacy?: boolean;
   author: {
     id?: string;
     address?: string;
@@ -34,6 +54,15 @@ interface Post {
     isVerified: boolean;
   };
   content: string;
+  localizedTitle?: string;
+  localizedContent?: string;
+  localization?: {
+    sourceLanguage: "en" | "ru" | "ua";
+    titleTranslations?: Partial<Record<"en" | "ru" | "ua", string>>;
+    contentTranslations?: Partial<Record<"en" | "ru" | "ua", string>>;
+    translationStatus?: string;
+    lastTranslatedAt?: string;
+  } | null;
   createdAt: string;
   likes: number;
   dislikes?: number;
@@ -44,11 +73,90 @@ interface Post {
   isLiked?: boolean;
   isDisliked?: boolean;
   isReposted?: boolean;
+  status?: string;
+  isPending?: boolean;
+  isPendingModeration?: boolean;
+  moderationStatus?: {
+    status?: string;
+    label?: string;
+    reviewedBy?: string | null;
+    reviewedAt?: string | null;
+    rejectionReason?: string | null;
+  };
   voteData?: {
     yes: number;
     no: number;
     deadline?: string;
   };
+}
+
+interface PostComment {
+  id: string;
+  postId: string;
+  parentPostId?: string;
+  content: string;
+  createdAt: string;
+  status?: "approved" | "pending_review" | "rejected" | string;
+  isPendingModeration?: boolean;
+  author: {
+    id: string;
+    address?: string | null;
+    username: string;
+    displayName: string;
+    avatar?: string;
+    isVerified: boolean;
+  };
+  isGuest?: boolean;
+}
+
+export interface PublicTransactionLogItem {
+  id: string;
+  action: string;
+  status: "success" | "failed" | "info" | string;
+  actor: string;
+  source: "live" | "derived" | string;
+  timestamp: string;
+  txHash?: string;
+  contractAddress?: string;
+  entityType?: string;
+  entityId?: string;
+  explorerTxUrl?: string | null;
+  explorerAddressUrl?: string | null;
+}
+
+type ReactionType = "like" | "repost";
+
+export interface AppFeatureFlags {
+  lotteryEnabled: boolean;
+  biometricsEnabled: boolean;
+  avatarUploadEnabled: boolean;
+  commentsEnabled: boolean;
+  anonymousPostingEnabled: boolean;
+}
+
+export interface AppConfig {
+  version?: string;
+  featureFlags: AppFeatureFlags;
+  timestamp?: string;
+}
+
+const DEFAULT_APP_CONFIG: AppConfig = {
+  featureFlags: {
+    lotteryEnabled: false,
+    biometricsEnabled: false,
+    avatarUploadEnabled: false,
+    commentsEnabled: true,
+    anonymousPostingEnabled: false,
+  },
+};
+
+const REGISTRATION_INTENT_STORAGE_KEY = "registration_intent";
+const REGISTRATION_COMPLETED_STORAGE_KEY = "registration_completed_address";
+const CURRENT_PROFILE_CACHE_KEY_PREFIX = "current_profile_cache";
+
+interface CurrentProfileCacheEntry {
+  savedAt: number;
+  data: any;
 }
 
 class ApiService {
@@ -57,9 +165,26 @@ class ApiService {
   private userAddress: string | null = null;
   private signer: ethers.Wallet | null = null;
   private baseURL: string = API_BASE_URL;
+  private readonly debugLogs = process.env.EXPO_PUBLIC_API_DEBUG === "1";
+  private appConfigCache: AppConfig | null = null;
+  private appConfigCacheExpiresAt = 0;
+  private appConfigRequest: Promise<AppConfig> | null = null;
+  private readonly appConfigCacheTtlMs = 5 * 60 * 1000;
+  private readonly currentProfileCacheTtlMs = 5 * 60 * 1000;
+  private currentProfileCacheMemory = new Map<string, CurrentProfileCacheEntry>();
+  private registrationIntent: RegistrationIntent | null = null;
+  private registrationPromise: Promise<boolean> | null = null;
+  private registrationCompletedAddress: string | null = null;
+
+  private log(...args: any[]) {
+    if (this.debugLogs) {
+      // Keep noisy network/debug traces behind an explicit env flag.
+      console.log(...args);
+    }
+  }
 
   private constructor() {
-    console.log('[ApiService] Initialized with fetch-only implementation');
+    this.log("[ApiService] Initialized with fetch-only implementation");
   }
 
   static getInstance(): ApiService {
@@ -69,18 +194,435 @@ class ApiService {
     return ApiService.instance;
   }
 
+  private normalizeAddress(address: string | null | undefined): string | null {
+    const normalized = String(address || "")
+      .trim()
+      .toLowerCase();
+    return normalized || null;
+  }
+
+  private getCurrentProfileCacheKey(
+    address?: string | null,
+  ): string | null {
+    const normalizedAddress = this.normalizeAddress(address || this.userAddress);
+    if (!normalizedAddress) {
+      return null;
+    }
+    return `${CURRENT_PROFILE_CACHE_KEY_PREFIX}:${normalizedAddress}`;
+  }
+
+  private async readCurrentProfileCacheEntry(
+    address?: string | null,
+  ): Promise<CurrentProfileCacheEntry | null> {
+    const cacheKey = this.getCurrentProfileCacheKey(address);
+    if (!cacheKey) {
+      return null;
+    }
+
+    const memoryEntry = this.currentProfileCacheMemory.get(cacheKey);
+    if (memoryEntry && Number.isFinite(memoryEntry.savedAt)) {
+      return memoryEntry;
+    }
+
+    const rawCacheEntry = await AsyncStorageService.getItem(cacheKey);
+    if (!rawCacheEntry) {
+      return null;
+    }
+
+    try {
+      const parsedEntry = JSON.parse(rawCacheEntry);
+      if (
+        parsedEntry &&
+        Number.isFinite(parsedEntry.savedAt) &&
+        Object.prototype.hasOwnProperty.call(parsedEntry, "data")
+      ) {
+        const normalizedEntry: CurrentProfileCacheEntry = {
+          savedAt: parsedEntry.savedAt,
+          data: parsedEntry.data,
+        };
+        this.currentProfileCacheMemory.set(cacheKey, normalizedEntry);
+        return normalizedEntry;
+      }
+    } catch (error) {
+      this.log("[ApiService] Failed to parse current profile cache:", error);
+    }
+
+    await AsyncStorageService.removeItem(cacheKey);
+    this.currentProfileCacheMemory.delete(cacheKey);
+    return null;
+  }
+
+  private async writeCurrentProfileCache(
+    address: string,
+    data: any,
+  ): Promise<void> {
+    const cacheKey = this.getCurrentProfileCacheKey(address);
+    if (!cacheKey) {
+      return;
+    }
+
+    const nextEntry: CurrentProfileCacheEntry = {
+      savedAt: Date.now(),
+      data,
+    };
+
+    this.currentProfileCacheMemory.set(cacheKey, nextEntry);
+    await AsyncStorageService.setItem(cacheKey, JSON.stringify(nextEntry));
+  }
+
+  async getCachedCurrentProfile(options?: {
+    address?: string;
+    maxAgeMs?: number;
+    allowStale?: boolean;
+  }): Promise<ApiResponse<any>> {
+    const normalizedAddress = this.normalizeAddress(
+      options?.address || this.userAddress,
+    );
+    if (!normalizedAddress) {
+      return {
+        success: false,
+        error: "Wallet not initialized for cached profile access",
+      };
+    }
+
+    const entry = await this.readCurrentProfileCacheEntry(normalizedAddress);
+    if (!entry) {
+      return {
+        success: false,
+        error: "Cached profile not available",
+      };
+    }
+
+    const maxAgeMs =
+      typeof options?.maxAgeMs === "number" && options.maxAgeMs > 0
+        ? options.maxAgeMs
+        : this.currentProfileCacheTtlMs;
+    const isStale = Date.now() - entry.savedAt > maxAgeMs;
+
+    if (isStale && options?.allowStale !== true) {
+      return {
+        success: false,
+        error: "Cached profile is stale",
+      };
+    }
+
+    return {
+      success: true,
+      data: entry.data,
+      fromCache: true,
+      isStale,
+    };
+  }
+
+  async primeCurrentProfileCache(
+    data: any,
+    options?: { address?: string },
+  ): Promise<void> {
+    const normalizedAddress = this.normalizeAddress(
+      options?.address || this.userAddress,
+    );
+    if (!normalizedAddress || !data) {
+      return;
+    }
+
+    await this.writeCurrentProfileCache(normalizedAddress, data);
+  }
+
+  async patchCurrentProfileCache(
+    profilePatch: Record<string, any>,
+    options?: { address?: string },
+  ): Promise<void> {
+    const normalizedAddress = this.normalizeAddress(
+      options?.address || this.userAddress,
+    );
+    if (!normalizedAddress || !profilePatch) {
+      return;
+    }
+
+    const existingEntry = await this.readCurrentProfileCacheEntry(
+      normalizedAddress,
+    );
+    const existingData =
+      existingEntry && existingEntry.data && typeof existingEntry.data === "object"
+        ? existingEntry.data
+        : {};
+    const existingProfile =
+      existingData.profile && typeof existingData.profile === "object"
+        ? existingData.profile
+        : {};
+
+    await this.writeCurrentProfileCache(normalizedAddress, {
+      ...existingData,
+      profile: {
+        ...existingProfile,
+        ...profilePatch,
+      },
+    });
+  }
+
+  async clearCurrentProfileCache(address?: string): Promise<void> {
+    const cacheKey = this.getCurrentProfileCacheKey(address);
+    if (!cacheKey) {
+      return;
+    }
+
+    this.currentProfileCacheMemory.delete(cacheKey);
+    await AsyncStorageService.removeItem(cacheKey);
+  }
+
+  private async persistRegistrationIntent(
+    intent: RegistrationIntent | null,
+  ): Promise<void> {
+    if (!intent) {
+      this.registrationIntent = null;
+      await AsyncStorageService.removeItem(REGISTRATION_INTENT_STORAGE_KEY);
+      return;
+    }
+
+    this.registrationIntent = {
+      ...intent,
+      userAddress:
+        this.normalizeAddress(intent.userAddress) || intent.userAddress,
+    };
+
+    await AsyncStorageService.setItem(
+      REGISTRATION_INTENT_STORAGE_KEY,
+      JSON.stringify(this.registrationIntent),
+    );
+  }
+
+  private async markRegistrationCompleted(address: string): Promise<void> {
+    const normalizedAddress = this.normalizeAddress(address);
+    if (!normalizedAddress) {
+      return;
+    }
+
+    this.registrationCompletedAddress = normalizedAddress;
+    await AsyncStorageService.setItem(
+      REGISTRATION_COMPLETED_STORAGE_KEY,
+      normalizedAddress,
+    );
+
+    if (this.registrationIntent?.userAddress === normalizedAddress) {
+      await this.persistRegistrationIntent(null);
+    }
+  }
+
+  private async hydrateRegistrationState(): Promise<void> {
+    const currentAddress = this.normalizeAddress(this.userAddress);
+    if (!currentAddress) {
+      return;
+    }
+
+    if (!this.registrationCompletedAddress) {
+      this.registrationCompletedAddress = this.normalizeAddress(
+        await AsyncStorageService.getItem(REGISTRATION_COMPLETED_STORAGE_KEY),
+      );
+    }
+
+    if (this.registrationIntent?.userAddress === currentAddress) {
+      return;
+    }
+
+    const persistedIntentRaw = await AsyncStorageService.getItem(
+      REGISTRATION_INTENT_STORAGE_KEY,
+    );
+    if (persistedIntentRaw) {
+      try {
+        const parsed = JSON.parse(persistedIntentRaw);
+        if (
+          parsed &&
+          typeof parsed.nickname === "string" &&
+          typeof parsed.passportHash === "string" &&
+          typeof parsed.passportCountry === "string" &&
+          this.normalizeAddress(parsed.userAddress) === currentAddress
+        ) {
+          this.registrationIntent = {
+            nickname: parsed.nickname,
+            passportHash: parsed.passportHash,
+            passportCountry: parsed.passportCountry,
+            userAddress: currentAddress,
+          };
+          return;
+        }
+      } catch (error) {
+        this.log("[ApiService] Failed to parse registration intent:", error);
+      }
+    }
+
+    try {
+      const [passportDataRaw, nicknameRaw] = await Promise.all([
+        AsyncStorageService.getItem("passport_data"),
+        AsyncStorageService.getItem("nickname"),
+      ]);
+
+      if (!passportDataRaw) {
+        return;
+      }
+
+      const passportData = JSON.parse(passportDataRaw);
+      const derivedIntent = buildRegistrationIntent(
+        passportData,
+        nicknameRaw || undefined,
+        currentAddress,
+      );
+      await this.persistRegistrationIntent(derivedIntent);
+    } catch (error) {
+      this.log(
+        "[ApiService] Unable to derive registration intent from storage:",
+        error,
+      );
+    }
+  }
+
+  async setRegistrationIntent(intent: RegistrationIntent | null): Promise<void> {
+    const normalizedAddress = this.normalizeAddress(intent?.userAddress);
+
+    if (normalizedAddress && this.registrationCompletedAddress !== normalizedAddress) {
+      this.registrationCompletedAddress = null;
+      await AsyncStorageService.removeItem(REGISTRATION_COMPLETED_STORAGE_KEY);
+    }
+
+    await this.persistRegistrationIntent(
+      intent
+        ? {
+            ...intent,
+            userAddress: normalizedAddress || intent.userAddress,
+          }
+        : null,
+    );
+  }
+
+  private isUserNotRegisteredError(error: any): boolean {
+    const status = Number(error?.response?.status || 0);
+    const details = [
+      error?.message,
+      error?.response?.data?.error,
+      error?.response?.data?.details,
+      error?.response?.data?.reason,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    return (
+      status === 403 &&
+      (details.includes("not registered") ||
+        details.includes("signer passport is not registered on-chain"))
+    );
+  }
+
+  async ensureRegistration(options?: {
+    background?: boolean;
+    force?: boolean;
+    reason?: string;
+  }): Promise<boolean> {
+    const normalizedAddress = this.normalizeAddress(this.userAddress);
+    if (!this.signer || !normalizedAddress) {
+      return false;
+    }
+
+    await this.hydrateRegistrationState();
+
+    if (!options?.force && this.registrationCompletedAddress === normalizedAddress) {
+      return true;
+    }
+
+    if (
+      !this.registrationIntent ||
+      this.normalizeAddress(this.registrationIntent.userAddress) !== normalizedAddress
+    ) {
+      return false;
+    }
+
+    if (this.registrationPromise) {
+      if (options?.background) {
+        return false;
+      }
+      return this.registrationPromise;
+    }
+
+    this.log(
+      "[ApiService] Starting deferred registration sync:",
+      options?.reason || "unspecified",
+    );
+
+    const promise = this.register(
+      this.registrationIntent.nickname,
+      this.registrationIntent.passportHash,
+      this.registrationIntent.passportCountry,
+    )
+      .then(async (response) => {
+        if (response.success) {
+          await this.markRegistrationCompleted(normalizedAddress);
+          return true;
+        }
+        return false;
+      })
+      .catch((error) => {
+        this.log("[ApiService] Deferred registration failed:", error);
+        return false;
+      })
+      .finally(() => {
+        this.registrationPromise = null;
+      });
+
+    this.registrationPromise = promise;
+
+    if (options?.background) {
+      void promise;
+      return false;
+    }
+
+    return promise;
+  }
+
+  private async runWithRegistrationRetry<T>(
+    operation: () => Promise<T>,
+    options?: {
+      registrationRequired?: boolean;
+      reason?: string;
+    },
+  ): Promise<T> {
+    if (options?.registrationRequired) {
+      await this.ensureRegistration({
+        reason: options.reason,
+      });
+    }
+
+    try {
+      return await operation();
+    } catch (error: any) {
+      if (
+        options?.registrationRequired &&
+        this.isUserNotRegisteredError(error)
+      ) {
+        const registrationRecovered = await this.ensureRegistration({
+          force: true,
+          reason: `${options.reason || "request"}:retry-after-not-registered`,
+        });
+
+        if (registrationRecovered) {
+          return operation();
+        }
+      }
+
+      throw error;
+    }
+  }
 
   // Universal fetch wrapper
   private async fetchWrapper(url: string, options: any = {}): Promise<any> {
-    const fullUrl = url.startsWith('http') ? url : `${this.baseURL}${url}`;
-    
+    const fullUrl = url.startsWith("http") ? url : `${this.baseURL}${url}`;
+
     // Build headers
     const headers: any = {
-      'Accept': 'application/json',
-      'User-Agent': 'ForumApp/1.0',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Pragma': 'no-cache',
-      'X-Platform': Platform.OS,
+      Accept: "application/json",
+      "User-Agent": "ForumApp/1.0",
+      "Cache-Control": "no-cache, no-store, must-revalidate",
+      Pragma: "no-cache",
+      "X-Platform": Platform.OS,
+      "X-Forum-Language": normalizeAppLanguage(i18n.language, "en"),
       ...options.headers,
     };
 
@@ -90,20 +632,24 @@ class ApiService {
     }
 
     // Add Content-Type for POST requests with body
-    if (options.method === 'POST' && options.body) {
-      headers['Content-Type'] = 'application/json';
+    if (options.method === "POST" && options.body) {
+      headers["Content-Type"] = "application/json";
     }
 
-    console.log('[ApiService] 🚀 REQUEST:', options.method || 'GET', fullUrl);
-    console.log('[ApiService] 📋 Headers:', JSON.stringify(headers, null, 2));
+    this.log("[ApiService] 🚀 REQUEST:", options.method || "GET", fullUrl);
+    this.log("[ApiService] 📋 Headers:", JSON.stringify(headers, null, 2));
     if (options.body) {
-      console.log('[ApiService] 📦 Body length:', options.body.length, 'characters');
+      this.log(
+        "[ApiService] 📦 Body length:",
+        options.body.length,
+        "characters",
+      );
     }
 
     // Make request with timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
-      console.log('[ApiService] ⏰ Request timeout after', API_TIMEOUT, 'ms');
+      this.log("[ApiService] ⏰ Request timeout after", API_TIMEOUT, "ms");
       controller.abort();
     }, API_TIMEOUT);
 
@@ -116,8 +662,11 @@ class ApiService {
 
       clearTimeout(timeoutId);
 
-      console.log('[ApiService] 📥 Response status:', response.status);
-      console.log('[ApiService] 📥 Response headers:', Object.fromEntries(response.headers.entries()));
+      this.log("[ApiService] 📥 Response status:", response.status);
+      this.log(
+        "[ApiService] 📥 Response headers:",
+        Object.fromEntries(response.headers.entries()),
+      );
 
       // Handle response
       if (!response.ok) {
@@ -127,39 +676,55 @@ class ApiService {
         } catch {
           errorData = { error: response.statusText };
         }
-        
-        console.log('[ApiService] ❌ Error response:', errorData);
-        
+
+        this.log("[ApiService] ❌ Error response:", errorData);
+
         // Check for rate limit error
         if (response.status === 429) {
-          const retryAfter = response.headers.get('retry-after');
-          const rateLimitRemaining = response.headers.get('ratelimit-remaining');
-          const rateLimitReset = response.headers.get('ratelimit-reset');
-          
-          console.log('[ApiService] ⚠️ RATE LIMIT HIT!');
-          console.log('[ApiService] ⏰ Retry after:', retryAfter, 'seconds');
-          console.log('[ApiService] 🔢 Remaining requests:', rateLimitRemaining);
-          console.log('[ApiService] 🔄 Reset in:', rateLimitReset, 'seconds');
-          
-          const error = new Error(`Rate limit exceeded. Please wait ${retryAfter || rateLimitReset || '5 minutes'} seconds before trying again.`) as any;
-          error.response = { 
-            status: response.status, 
+          const retryAfter = response.headers.get("retry-after");
+          const rateLimitRemaining = response.headers.get(
+            "ratelimit-remaining",
+          );
+          const rateLimitReset = response.headers.get("ratelimit-reset");
+
+          this.log("[ApiService] ⚠️ RATE LIMIT HIT!");
+          this.log("[ApiService] ⏰ Retry after:", retryAfter, "seconds");
+          this.log("[ApiService] 🔢 Remaining requests:", rateLimitRemaining);
+          this.log("[ApiService] 🔄 Reset in:", rateLimitReset, "seconds");
+
+          const error = new Error(
+            `Rate limit exceeded. Please wait ${retryAfter || rateLimitReset || "5 minutes"} seconds before trying again.`,
+          ) as any;
+          error.response = {
+            status: response.status,
             data: errorData,
             isRateLimit: true,
-            retryAfter: parseInt(retryAfter || rateLimitReset || '300')
+            retryAfter: parseInt(retryAfter || rateLimitReset || "300"),
           };
           throw error;
         }
-        
-        const error = new Error(`HTTP ${response.status}: ${response.statusText}`) as any;
+
+        const serverMessage =
+          (typeof errorData?.details === "string" &&
+            errorData.details.trim()) ||
+          (typeof errorData?.reason === "string" && errorData.reason.trim()) ||
+          (typeof errorData?.message === "string" &&
+            errorData.message.trim()) ||
+          (typeof errorData?.error === "string" && errorData.error.trim()) ||
+          response.statusText ||
+          "Request failed";
+
+        const error = new Error(
+          `HTTP ${response.status}: ${serverMessage}`,
+        ) as any;
         error.response = { status: response.status, data: errorData };
         throw error;
       }
 
       // Parse response
       let data;
-      const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
         data = await response.json();
       } else {
         const text = await response.text();
@@ -170,118 +735,248 @@ class ApiService {
         }
       }
 
-      console.log('[ApiService] ✅ Success response data keys:', Object.keys(data || {}));
+      this.log(
+        "[ApiService] ✅ Success response data keys:",
+        Object.keys(data || {}),
+      );
       return { data, status: response.status };
     } catch (error: any) {
       clearTimeout(timeoutId);
-      
-      if (error.name === 'AbortError') {
-        console.log('[ApiService] ❌ Request aborted (timeout)');
-        throw new Error('Request timeout');
+
+      if (error.name === "AbortError") {
+        this.log("[ApiService] ❌ Request aborted (timeout)");
+        throw new Error("Request timeout");
       }
-      
-      console.log('[ApiService] ❌ Fetch error:', error.message);
+
+      this.log("[ApiService] ❌ Fetch error:", error.message);
       throw error;
     }
   }
 
   // HTTP GET
   private async get(url: string, params?: any): Promise<any> {
-    const queryString = params ? '?' + new URLSearchParams(params).toString() : '';
-    return this.fetchWrapper(`${url}${queryString}`, { method: 'GET' });
+    const queryString = params
+      ? "?" + new URLSearchParams(params).toString()
+      : "";
+    return this.fetchWrapper(`${url}${queryString}`, { method: "GET" });
   }
 
   // HTTP POST
   private async post(url: string, data?: any): Promise<any> {
     return this.fetchWrapper(url, {
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify(data),
     });
   }
 
+  private normalizeAppConfig(payload: any): AppConfig {
+    const featureFlags = payload?.featureFlags || {};
+    return {
+      version:
+        typeof payload?.version === "string" ? payload.version : undefined,
+      timestamp:
+        typeof payload?.timestamp === "string" ? payload.timestamp : undefined,
+      featureFlags: {
+        lotteryEnabled: featureFlags?.lotteryEnabled === true,
+        biometricsEnabled: featureFlags?.biometricsEnabled === true,
+        avatarUploadEnabled: featureFlags?.avatarUploadEnabled === true,
+        commentsEnabled: featureFlags?.commentsEnabled !== false,
+        anonymousPostingEnabled:
+          featureFlags?.anonymousPostingEnabled === true,
+      },
+    };
+  }
+
+  private normalizePostRecord(post: any): Post {
+    const normalizedLanguage = normalizeAppLanguage(i18n.language, "en");
+    const normalizedPost = {
+      ...(post || {}),
+      localizedTitle:
+        String(post?.localizedTitle || "").trim() ||
+        getPostDisplayTitle(post || {}, normalizedLanguage) ||
+        undefined,
+      localizedContent:
+        String(post?.localizedContent || "").trim() ||
+        getPostDisplayContent(post || {}, normalizedLanguage) ||
+        undefined,
+    } as Post;
+
+    return normalizedPost;
+  }
+
+  private normalizePostsCollection(posts: any[]): Post[] {
+    return (posts || []).map((post) => this.normalizePostRecord(post));
+  }
+
   // Initialize with wallet for real signing
   async initialize(wallet: any): Promise<void> {
-    console.log('[ApiService] ===== INITIALIZE =====');
-    console.log('[ApiService] Wallet received:', wallet ? 'YES' : 'NO');
-    
+    this.log("[ApiService] ===== INITIALIZE =====");
+    this.log("[ApiService] Wallet received:", wallet ? "YES" : "NO");
+
     if (wallet) {
-      console.log('[ApiService] Wallet address:', wallet.address);
-      
+      this.log("[ApiService] Wallet address:", wallet.address);
+
       // Get real ethers.Wallet instance from WalletService (not just private key)
-      const { WalletService } = require('./WalletService');
+      const { WalletService } = require("./WalletService");
       const walletService = WalletService.getInstance();
       const ethersWallet = await walletService.getEthersWallet();
-      
+
       if (ethersWallet) {
         this.signer = ethersWallet;
         this.userAddress = ethersWallet.address;
-        console.log('[ApiService] ✅ Initialized with real ethers.Wallet:', this.userAddress);
-        console.log('[ApiService] ✅ Real EIP-712 signing enabled');
+        this.log(
+          "[ApiService] ✅ Initialized with real ethers.Wallet:",
+          this.userAddress,
+        );
+        this.log("[ApiService] ✅ Real EIP-712 signing enabled");
       } else {
-        console.log('[ApiService] ❌ No ethers.Wallet available for signing');
+        this.log("[ApiService] ❌ No ethers.Wallet available for signing");
         this.signer = null;
         this.userAddress = wallet.address;
       }
-      
-      console.log('[ApiService] Signer set:', !!this.signer);
-      console.log('[ApiService] User address set:', this.userAddress);
+
+      this.log("[ApiService] Signer set:", !!this.signer);
+      this.log("[ApiService] User address set:", this.userAddress);
     } else {
-      console.log('[ApiService] ⚠️ No wallet provided to initialize');
+      this.log("[ApiService] ⚠️ No wallet provided to initialize");
       this.signer = null;
       this.userAddress = null;
     }
-    
+
+    await this.hydrateRegistrationState();
+
+    if (
+      this.signer &&
+      this.userAddress &&
+      this.registrationCompletedAddress !== this.normalizeAddress(this.userAddress)
+    ) {
+      void this.ensureRegistration({
+        background: true,
+        reason: "initialize",
+      });
+    }
+
     // Auto-fetch feed after successful wallet initialization
     if (this.signer && this.userAddress) {
-      console.log('[ApiService] 🚀 Wallet initialized successfully - auto-fetching feed...');
+      this.log(
+        "[ApiService] 🚀 Wallet initialized successfully - auto-fetching feed...",
+      );
       try {
         const feedResult = await this.getFeed(1, 20);
         if (feedResult.success) {
-          console.log('[ApiService] ✅ Feed auto-fetched successfully:', feedResult.data.length, 'posts');
+          this.log(
+            "[ApiService] ✅ Feed auto-fetched successfully:",
+            feedResult.data.length,
+            "posts",
+          );
         } else {
-          console.log('[ApiService] ⚠️ Feed auto-fetch failed:', feedResult.error);
+          this.log("[ApiService] ⚠️ Feed auto-fetch failed:", feedResult.error);
         }
       } catch (error: any) {
-        console.log('[ApiService] ❌ Feed auto-fetch error:', error.message);
+        this.log("[ApiService] ❌ Feed auto-fetch error:", error.message);
       }
     }
-    
-    console.log('[ApiService] ===== END INITIALIZE =====');
+
+    this.log("[ApiService] ===== END INITIALIZE =====");
+  }
+
+  async getAppConfig(
+    forceRefresh: boolean = false,
+  ): Promise<ApiResponse<AppConfig>> {
+    const now = Date.now();
+    if (
+      !forceRefresh &&
+      this.appConfigCache &&
+      this.appConfigCacheExpiresAt > now
+    ) {
+      return {
+        success: true,
+        data: this.appConfigCache,
+      };
+    }
+
+    try {
+      if (!forceRefresh && this.appConfigRequest) {
+        const data = await this.appConfigRequest;
+        return {
+          success: true,
+          data,
+        };
+      }
+
+      this.appConfigRequest = (async () => {
+        try {
+          const response = await this.get("/api/app-config");
+          const normalized = this.normalizeAppConfig(response.data || response);
+          this.appConfigCache = normalized;
+          this.appConfigCacheExpiresAt = Date.now() + this.appConfigCacheTtlMs;
+          return normalized;
+        } catch (appConfigError: any) {
+          this.log(
+            "[ApiService] App config endpoint failed, fallback to /api/status",
+            appConfigError?.message || appConfigError,
+          );
+          const response = await this.get("/api/status");
+          const normalized = this.normalizeAppConfig(response.data || response);
+          this.appConfigCache = normalized;
+          this.appConfigCacheExpiresAt = Date.now() + this.appConfigCacheTtlMs;
+          return normalized;
+        } finally {
+          this.appConfigRequest = null;
+        }
+      })();
+
+      const data = await this.appConfigRequest;
+      return {
+        success: true,
+        data,
+      };
+    } catch (error: any) {
+      const fallback = this.appConfigCache || DEFAULT_APP_CONFIG;
+      return {
+        success: !!this.appConfigCache,
+        data: fallback,
+        error: error.message || "Failed to fetch app configuration",
+      };
+    }
   }
 
   // Generate nonce for signing
   async getNonce(address: string): Promise<string> {
-    console.log('[ApiService] Getting nonce for address:', address);
+    this.log("[ApiService] Getting nonce for address:", address);
     try {
       const response = await this.get(`/api/signed/nonce/${address}`);
-      console.log('[ApiService] ✅ Nonce received:', response.data.nonce);
+      this.log("[ApiService] ✅ Nonce received:", response.data.nonce);
       return response.data.nonce;
     } catch (error: any) {
-      console.log('[ApiService] ⚠️ Server nonce failed, using demo nonce:', error.message);
+      this.log(
+        "[ApiService] ⚠️ Server nonce failed, using demo nonce:",
+        error.message,
+      );
       const demoNonce = Math.random().toString(36).substring(2, 15);
-      console.log('[ApiService] 📝 Demo nonce generated:', demoNonce);
+      this.log("[ApiService] 📝 Demo nonce generated:", demoNonce);
       return demoNonce;
     }
   }
 
   // Sign message with EIP-712
   async signMessage(primaryType: string, message: any): Promise<string> {
-    console.log('[ApiService] 🖊️ Signing message:', primaryType);
-    
+    this.log("[ApiService] 🖊️ Signing message:", primaryType);
+
     if (!this.signer) {
-      throw new Error('No signer available');
+      throw new Error("No signer available");
     }
 
     const types = this.getEIP712Types(primaryType);
     const domain = EIP712_DOMAIN;
-    
-    console.log('[ApiService] Signing with domain:', domain);
-    console.log('[ApiService] Signing with types:', types);
-    console.log('[ApiService] Signing message:', message);
-    
+
+    this.log("[ApiService] Signing with domain:", domain);
+    this.log("[ApiService] Signing with types:", types);
+    this.log("[ApiService] Signing message:", message);
+
     const signature = await this.signer.signTypedData(domain, types, message);
-    
-    console.log('[ApiService] ✅ Signature generated:', signature);
+
+    this.log("[ApiService] ✅ Signature generated:", signature);
     return signature;
   }
 
@@ -289,39 +984,87 @@ class ApiService {
   private getEIP712Types(primaryType: string) {
     const types: any = {
       Register: [
-        { name: 'nickname', type: 'string' },
-        { name: 'passportHash', type: 'string' },
-        { name: 'nonce', type: 'string' },
-        { name: 'deadline', type: 'uint256' },
+        { name: "nickname", type: "string" },
+        { name: "passportHash", type: "bytes32" },
+        { name: "passportCountry", type: "string" },
+        { name: "nonce", type: "string" },
+        { name: "deadline", type: "uint256" },
       ],
       CreatePost: [
-        { name: 'content', type: 'string' },
-        { name: 'nonce', type: 'string' },
-        { name: 'deadline', type: 'uint256' },
+        { name: "content", type: "string" },
+        { name: "title", type: "string" },
+        { name: "isProposal", type: "bool" },
+        { name: "voteData", type: "string" },
+        { name: "isAnonymous", type: "bool" },
+        { name: "ipfsHash", type: "string" },
+        { name: "replyTo", type: "uint256" },
+        { name: "nonce", type: "string" },
+        { name: "deadline", type: "uint256" },
       ],
-      Vote: [
-        { name: 'postId', type: 'string' },
-        { name: 'voteOption', type: 'string' },
-        { name: 'nonce', type: 'string' },
-        { name: 'deadline', type: 'uint256' },
+      CreateComment: [
+        { name: "content", type: "string" },
+        { name: "parentPostId", type: "string" },
+        { name: "nonce", type: "string" },
+        { name: "deadline", type: "uint256" },
+      ],
+      ReportComment: [
+        { name: "commentId", type: "string" },
+        { name: "reason", type: "string" },
+        { name: "nonce", type: "string" },
+        { name: "deadline", type: "uint256" },
+      ],
+      Follow: [
+        { name: "userToFollow", type: "address" },
+        { name: "isFollowing", type: "bool" },
+        { name: "nonce", type: "string" },
+        { name: "deadline", type: "uint256" },
+      ],
+      ReactToPost: [
+        { name: "postId", type: "string" },
+        { name: "reactionType", type: "string" },
+        { name: "active", type: "bool" },
+        { name: "nonce", type: "string" },
+        { name: "deadline", type: "uint256" },
       ],
       PassportVerification: [
-        { name: 'merkleRoot', type: 'bytes32' },
-        { name: 'merkleProof', type: 'bytes32[]' },
-        { name: 'merkleLeaf', type: 'bytes32' },
-        { name: 'nonce', type: 'string' },
-        { name: 'timestamp', type: 'uint256' },
+        { name: "merkleRoot", type: "bytes32" },
+        { name: "merkleProof", type: "bytes32[]" },
+        { name: "merkleLeaf", type: "bytes32" },
+        { name: "nonce", type: "string" },
+        { name: "timestamp", type: "uint256" },
       ],
       GetFeed: [
-        { name: 'page', type: 'uint256' },
-        { name: 'limit', type: 'uint256' },
-        { name: 'nonce', type: 'string' },
-        { name: 'deadline', type: 'uint256' },
+        { name: "page", type: "uint256" },
+        { name: "limit", type: "uint256" },
+        { name: "nonce", type: "string" },
+        { name: "deadline", type: "uint256" },
+      ],
+      GetPostComments: [
+        { name: "postId", type: "string" },
+        { name: "limit", type: "uint256" },
+        { name: "nonce", type: "string" },
+        { name: "deadline", type: "uint256" },
       ],
       GetProfile: [
-        { name: 'address', type: 'string' },
-        { name: 'nonce', type: 'string' },
-        { name: 'deadline', type: 'uint256' },
+        { name: "address", type: "string" },
+        { name: "nonce", type: "string" },
+        { name: "deadline", type: "uint256" },
+      ],
+      UpdateProfileSettings: [
+        { name: "address", type: "string" },
+        { name: "username", type: "string" },
+        { name: "displayName", type: "string" },
+        { name: "avatar", type: "string" },
+        { name: "nonce", type: "string" },
+        { name: "deadline", type: "uint256" },
+      ],
+      UploadProfileAvatar: [
+        { name: "address", type: "string" },
+        { name: "fileName", type: "string" },
+        { name: "mimeType", type: "string" },
+        { name: "sizeBytes", type: "uint256" },
+        { name: "nonce", type: "string" },
+        { name: "deadline", type: "uint256" },
       ],
     };
 
@@ -329,13 +1072,16 @@ class ApiService {
   }
 
   // Create signed request payload
-  private async createSignedRequest(primaryType: string, message: any): Promise<any> {
-    console.log('[ApiService] ===== CREATE SIGNED REQUEST =====');
-    console.log('[ApiService] Primary Type:', primaryType);
-    console.log('[ApiService] Message:', JSON.stringify(message, null, 2));
+  private async createSignedRequest(
+    primaryType: string,
+    message: any,
+  ): Promise<any> {
+    this.log("[ApiService] ===== CREATE SIGNED REQUEST =====");
+    this.log("[ApiService] Primary Type:", primaryType);
+    this.log("[ApiService] Message:", JSON.stringify(message, null, 2));
 
     if (!this.signer || !this.userAddress) {
-      throw new Error('Wallet not initialized for signed request');
+      throw new Error("Wallet not initialized for signed request");
     }
 
     // Get nonce
@@ -349,11 +1095,14 @@ class ApiService {
       deadline,
     };
 
-    console.log('[ApiService] Complete signed message:', JSON.stringify(signedMessage, null, 2));
+    this.log(
+      "[ApiService] Complete signed message:",
+      JSON.stringify(signedMessage, null, 2),
+    );
 
     // Sign the message
     const signature = await this.signMessage(primaryType, signedMessage);
-    
+
     // Get EIP-712 types
     const types = this.getEIP712Types(primaryType);
 
@@ -363,40 +1112,47 @@ class ApiService {
       types,
       primaryType,
     };
-    
-    console.log('[ApiService] Final payload created - keys:', Object.keys(payload));
-    console.log('[ApiService] ===== END CREATE SIGNED REQUEST =====');
+
+    this.log(
+      "[ApiService] Final payload created - keys:",
+      Object.keys(payload),
+    );
+    this.log("[ApiService] ===== END CREATE SIGNED REQUEST =====");
 
     return payload;
   }
 
   // Get public feed (no authentication required)
-  async getPublicFeed(page: number = 1, limit: number = 20, sort?: string): Promise<ApiResponse<Post[]>> {
+  async getPublicFeed(
+    page: number = 1,
+    limit: number = 20,
+    sort?: string,
+  ): Promise<ApiResponse<Post[]>> {
     try {
-      console.log('[ApiService] Getting public feed...');
-      
+      this.log("[ApiService] Getting public feed...");
+
       const params = new URLSearchParams({
         page: page.toString(),
-        limit: limit.toString()
+        limit: limit.toString(),
       });
-      
+
       if (sort) {
-        params.append('sort', sort);
+        params.append("sort", sort);
       }
-      
+
       const response = await this.get(`/api/posts/feed?${params.toString()}`);
-      
+
       // Process response
       let posts = [];
       let data = response.data || response;
-      
+
       if (data && data.posts && Array.isArray(data.posts)) {
         posts = data.posts;
       } else if (Array.isArray(data)) {
         posts = data;
       }
-      
-      console.log('[ApiService] Public feed received:', posts.length, 'posts');
+
+      this.log("[ApiService] Public feed received:", posts.length, "posts");
 
       // TEST: Add a long message post to test UI
       // const testLongPost = {
@@ -432,61 +1188,71 @@ class ApiService {
 
       return {
         success: true,
-        data: posts,
+        data: this.normalizePostsCollection(posts),
       };
     } catch (error) {
-      console.error('[ApiService] Public feed error:', error);
+      console.error("[ApiService] Public feed error:", error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to fetch public feed',
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to fetch public feed",
         data: [],
       };
     }
   }
 
   // Get feed (with authentication fallback to public)
-  async getFeed(page: number = 1, limit: number = 20, sort?: string): Promise<ApiResponse<Post[]>> {
+  async getFeed(
+    page: number = 1,
+    limit: number = 20,
+    sort?: string,
+  ): Promise<ApiResponse<Post[]>> {
     try {
-      console.log('[ApiService] Getting feed...');
-      
+      this.log("[ApiService] Getting feed...");
+
       // If not authenticated, use public feed
       if (!this.signer || !this.userAddress) {
-        console.log('[ApiService] No authentication - using public feed');
+        this.log("[ApiService] No authentication - using public feed");
         return await this.getPublicFeed(page, limit, sort);
       }
 
-      console.log('[ApiService] 🔐 Creating signed feed request...');
-      
+      this.log("[ApiService] 🔐 Creating signed feed request...");
+
       const message: any = { page, limit };
       if (sort) {
         message.sort = sort;
       }
-      
-      const signedPayload = await this.createSignedRequest('GetFeed', message);
-      
-      console.log('[ApiService] Sending signed feed request...');
-      const response = await this.post('/api/signed/feed', signedPayload);
+
+      const signedPayload = await this.createSignedRequest("GetFeed", message);
+
+      this.log("[ApiService] Sending signed feed request...");
+      const response = await this.post("/api/signed/feed", signedPayload);
 
       // Process response
       let posts = [];
       let data = response.data || response;
-      
+
       if (data && data.posts && Array.isArray(data.posts)) {
         posts = data.posts;
       } else if (Array.isArray(data)) {
         posts = data;
       }
-      
-      console.log('[ApiService] Feed received:', posts.length, 'posts');
-      
+
+      this.log("[ApiService] Feed received:", posts.length, "posts");
+
       // Focus on post_commandment_1 specifically
-      console.log('[ApiService] 🎯 SEARCHING FOR post_commandment_1...');
-      const targetPost = posts.find(post => post.id === 'post_commandment_1');
-      
+      this.log("[ApiService] 🎯 SEARCHING FOR post_commandment_1...");
+      const targetPost = posts.find((post) => post.id === "post_commandment_1");
+
       if (targetPost) {
-        console.log('[ApiService] ✅ FOUND post_commandment_1:');
-        console.log('[ApiService] COMPLETE post_commandment_1 structure:', JSON.stringify(targetPost, null, 2));
-        console.log('[ApiService] post_commandment_1 vote fields:', {
+        this.log("[ApiService] ✅ FOUND post_commandment_1:");
+        this.log(
+          "[ApiService] COMPLETE post_commandment_1 structure:",
+          JSON.stringify(targetPost, null, 2),
+        );
+        this.log("[ApiService] post_commandment_1 vote fields:", {
           id: targetPost.id,
           hasVoteData: !!targetPost.voteData,
           voteDataComplete: targetPost.voteData,
@@ -501,17 +1267,23 @@ class ApiService {
           voted: targetPost.voted,
           userChoice: targetPost.userChoice,
           userSelected: targetPost.userSelected,
-          currentVote: targetPost.currentVote
+          currentVote: targetPost.currentVote,
         });
       } else {
-        console.log('[ApiService] ❌ post_commandment_1 NOT FOUND in feed');
-        console.log('[ApiService] Available post IDs:', posts.map(p => p.id));
+        this.log("[ApiService] ❌ post_commandment_1 NOT FOUND in feed");
+        this.log(
+          "[ApiService] Available post IDs:",
+          posts.map((p) => p.id),
+        );
       }
-      
+
       // Also log raw response for completeness
-      console.log('[ApiService] 🔍 RAW API RESPONSE:');
-      console.log('[ApiService] Response status:', response.status);
-      console.log('[ApiService] Response data keys:', response.data ? Object.keys(response.data) : 'null');
+      this.log("[ApiService] 🔍 RAW API RESPONSE:");
+      this.log("[ApiService] Response status:", response.status);
+      this.log(
+        "[ApiService] Response data keys:",
+        response.data ? Object.keys(response.data) : "null",
+      );
 
       // TEST: Add a long message post to test UI
       // const testLongPost = {
@@ -547,13 +1319,13 @@ class ApiService {
 
       return {
         success: true,
-        data: posts,
+        data: this.normalizePostsCollection(posts),
       };
     } catch (error: any) {
-      console.error('[ApiService] Failed to get feed:', error);
+      console.error("[ApiService] Failed to get feed:", error);
       return {
         success: false,
-        error: error.message || 'Failed to fetch feed',
+        error: error.message || "Failed to fetch feed",
         data: [],
       };
     }
@@ -562,30 +1334,38 @@ class ApiService {
   // Get user profile
   async getUserProfile(address: string): Promise<ApiResponse<UserProfile>> {
     try {
-      console.log('[ApiService] Getting user profile for:', address);
-      
+      this.log("[ApiService] Getting user profile for:", address);
+
       let response;
-      
-      // For logged-in users, use signed endpoints
-      if (this.signer && this.userAddress) {
-        console.log('[ApiService] 🔐 Creating signed profile request...');
-        
-        const signedPayload = await this.createSignedRequest('GetProfile', {
-          address,
+      const normalizedRequestedAddress = this.normalizeAddress(address);
+      const normalizedCurrentAddress = this.normalizeAddress(this.userAddress);
+      const isOwnProfile =
+        !!normalizedRequestedAddress &&
+        !!normalizedCurrentAddress &&
+        normalizedRequestedAddress === normalizedCurrentAddress;
+
+      // Signed profile endpoint is for the current signer profile only.
+      // For other users we must use the public profile route, otherwise
+      // the backend returns the current signer and the UI shows the wrong header.
+      if (this.signer && this.userAddress && isOwnProfile) {
+        this.log("[ApiService] 🔐 Creating signed profile request...");
+
+        const signedPayload = await this.createSignedRequest("GetProfile", {
+          address: normalizedRequestedAddress,
         });
-        
-        response = await this.post('/api/signed/profile', signedPayload);
+
+        response = await this.post("/api/signed/profile", signedPayload);
       } else {
-        console.log('[ApiService] 👤 Using unsigned profile request...');
-        response = await this.get(`/api/profile/${address}`);
+        this.log("[ApiService] 👤 Using unsigned profile request...");
+        response = await this.get(`/api/profile/${normalizedRequestedAddress || address}`);
       }
-      
+
       return {
         success: true,
         data: response.data.profile || response.data,
       };
     } catch (error: any) {
-      console.error('[ApiService] Failed to get user profile:', error);
+      console.error("[ApiService] Failed to get user profile:", error);
       return {
         success: false,
         error: error.message,
@@ -597,25 +1377,32 @@ class ApiService {
   async getMyProfileWithVotingHistory(): Promise<ApiResponse<any>> {
     try {
       if (!this.signer || !this.userAddress) {
-        throw new Error('Wallet not initialized for profile access');
+        throw new Error("Wallet not initialized for profile access");
       }
 
-      console.log('[ApiService] Getting my profile with voting history...');
-      
+      this.log("[ApiService] Getting my profile with voting history...");
+
       // Use the same signature structure as regular getUserProfile but for own profile
-      const signedPayload = await this.createSignedRequest('GetProfile', {
+      const signedPayload = await this.createSignedRequest("GetProfile", {
         address: this.userAddress,
       });
 
-      console.log('[ApiService] Sending signed profile request with voting history...');
-      const response = await this.post('/api/signed/profile', signedPayload);
+      this.log(
+        "[ApiService] Sending signed profile request with voting history...",
+      );
+      const response = await this.post("/api/signed/profile", signedPayload);
+      const normalizedData = this.normalizePostRecord(response.data);
+      await this.writeCurrentProfileCache(this.userAddress, normalizedData);
 
       return {
         success: true,
-        data: response.data,
+        data: normalizedData,
       };
     } catch (error: any) {
-      console.error('[ApiService] Failed to get profile with voting history:', error);
+      console.error(
+        "[ApiService] Failed to get profile with voting history:",
+        error,
+      );
       return {
         success: false,
         error: error.message,
@@ -623,27 +1410,214 @@ class ApiService {
     }
   }
 
-  // Create post
-  async createPost(content: string): Promise<ApiResponse<Post>> {
+  async updateProfileSettings(payload: {
+    address?: string;
+    username: string;
+    displayName: string;
+    avatar?: string;
+  }): Promise<ApiResponse<any>> {
     try {
-      if (!this.signer || !this.userAddress) {
-        throw new Error('No wallet available for post creation');
-      }
+      const response = await this.runWithRegistrationRetry(
+        async () => {
+          if (!this.signer || !this.userAddress) {
+            throw new Error("Wallet not initialized for profile update");
+          }
 
-      console.log('[ApiService] 🔐 Creating signed post request...');
-      
-      const signedPayload = await this.createSignedRequest('CreatePost', {
-        content,
-      });
+          const targetAddress = payload.address || this.userAddress;
+          const signedPayload = await this.createSignedRequest(
+            "UpdateProfileSettings",
+            {
+              address: targetAddress,
+              username: String(payload.username || "")
+                .trim()
+                .toLowerCase(),
+              displayName: String(payload.displayName || "").trim(),
+              avatar: String(payload.avatar || "").trim(),
+            },
+          );
 
-      const response = await this.post('/api/signed/post', signedPayload);
+          return this.post("/api/signed/profile-metadata", signedPayload);
+        },
+        {
+          registrationRequired: true,
+          reason: "profile-update",
+        },
+      );
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Failed to update profile settings",
+      };
+    }
+  }
+
+  async uploadProfileAvatar(payload: {
+    address?: string;
+    fileName: string;
+    mimeType: string;
+    sizeBytes: number;
+    fileDataBase64: string;
+  }): Promise<ApiResponse<any>> {
+    try {
+      const response = await this.runWithRegistrationRetry(
+        async () => {
+          if (!this.signer || !this.userAddress) {
+            throw new Error("Wallet not initialized for avatar upload");
+          }
+
+          const targetAddress = payload.address || this.userAddress;
+          const signedPayload = await this.createSignedRequest(
+            "UploadProfileAvatar",
+            {
+              address: targetAddress,
+              fileName: String(payload.fileName || "").trim(),
+              mimeType: String(payload.mimeType || "")
+                .trim()
+                .toLowerCase(),
+              sizeBytes: Math.max(0, Math.floor(Number(payload.sizeBytes || 0))),
+            },
+          );
+
+          return this.post("/api/signed/profile-avatar/upload", {
+            ...signedPayload,
+            fileDataBase64: String(payload.fileDataBase64 || "").trim(),
+          });
+        },
+        {
+          registrationRequired: true,
+          reason: "profile-avatar-upload",
+        },
+      );
 
       return {
         success: true,
         data: response.data,
       };
     } catch (error: any) {
-      console.error('[ApiService] Failed to create post:', error);
+      return {
+        success: false,
+        error: error.message || "Failed to upload avatar",
+      };
+    }
+  }
+  // Create post submission (requires admin approval before publication)
+  async createPost(payload: {
+    content: string;
+    title?: string;
+    isProposal?: boolean;
+    voteData?: any;
+    isAnonymous?: boolean;
+    ipfsHash?: string;
+    replyTo?: number;
+  }): Promise<ApiResponse<any>> {
+    try {
+      const response = await this.runWithRegistrationRetry(
+        async () => {
+          if (!this.signer || !this.userAddress) {
+            throw new Error("No wallet available for post creation");
+          }
+
+          this.log("[ApiService] Creating signed post request...");
+
+          const serializedVoteData =
+            payload.isProposal === true
+              ? JSON.stringify(payload.voteData || {})
+              : "";
+
+          const signedPayload = await this.createSignedRequest("CreatePost", {
+            content: payload.content,
+            title: payload.title || "",
+            isProposal: payload.isProposal === true,
+            voteData: serializedVoteData,
+            isAnonymous: payload.isAnonymous === true,
+            ipfsHash: payload.ipfsHash || "",
+            replyTo: Number(payload.replyTo || 0),
+          });
+
+          return this.post("/api/signed/post-submission", signedPayload);
+        },
+        {
+          registrationRequired: true,
+          reason: "create-post",
+        },
+      );
+
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error: any) {
+      console.error("[ApiService] Failed to create post:", error);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  async followUser(
+    userToFollow: string,
+    isFollowing: boolean = true,
+  ): Promise<ApiResponse<any>> {
+    try {
+      const response = await this.runWithRegistrationRetry(
+        async () => {
+          if (!this.signer || !this.userAddress) {
+            throw new Error("Wallet not initialized for follow action");
+          }
+
+          const signedPayload = await this.createSignedRequest("Follow", {
+            userToFollow,
+            isFollowing,
+          });
+
+          return this.post("/api/signed/follow", signedPayload);
+        },
+        {
+          registrationRequired: true,
+          reason: "follow-user",
+        },
+      );
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error: any) {
+      console.error("[ApiService] Follow action failed:", error);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  async toggleReaction(
+    postId: string,
+    reactionType: ReactionType,
+    active: boolean,
+  ): Promise<ApiResponse<any>> {
+    try {
+      if (!this.signer || !this.userAddress) {
+        throw new Error("Wallet not initialized for reaction");
+      }
+
+      const signedPayload = await this.createSignedRequest("ReactToPost", {
+        postId,
+        reactionType,
+        active,
+      });
+
+      const response = await this.post("/api/signed/reaction", signedPayload);
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error: any) {
+      console.error("[ApiService] Reaction action failed:", error);
       return {
         success: false,
         error: error.message,
@@ -654,69 +1628,88 @@ class ApiService {
   // Health check
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await this.get('/health');
+      const response = await this.get("/health");
       return response.status === 200;
     } catch (error) {
-      console.error('[ApiService] Health check failed:', error);
+      console.error("[ApiService] Health check failed:", error);
       return false;
     }
   }
 
   // Test external APIs
-  async testExternalAPI(): Promise<{ jsonplaceholder: boolean; railway: boolean; details: any }> {
-    const result = { jsonplaceholder: false, railway: false, details: {} };
-    
+  async testExternalAPI(): Promise<{
+    jsonplaceholder: boolean;
+    railway: boolean;
+    details: any;
+  }> {
+    const result: {
+      jsonplaceholder: boolean;
+      railway: boolean;
+      details: Record<string, any>;
+    } = {
+      jsonplaceholder: false,
+      railway: false,
+      details: {},
+    };
+
     // Test JSONPlaceholder
     try {
-      const response = await fetch('https://jsonplaceholder.typicode.com/posts/1', {
-        method: 'GET',
-        signal: AbortSignal.timeout(5000),
-      });
+      const response = await fetch(
+        "https://jsonplaceholder.typicode.com/posts/1",
+        {
+          method: "GET",
+          signal: AbortSignal.timeout(5000),
+        },
+      );
       result.jsonplaceholder = response.ok;
       result.details.jsonplaceholder = { status: response.status };
     } catch (error: any) {
-      console.log('[ApiService] JSONPlaceholder test failed:', error.message);
+      this.log("[ApiService] JSONPlaceholder test failed:", error.message);
       result.details.jsonplaceholder = { error: error.message };
     }
 
     // Test Railway health
     try {
-      const response = await this.get('/health');
+      const response = await this.get("/health");
       result.railway = response.status === 200;
       result.details.railway = { status: response.status };
     } catch (error: any) {
-      console.log('[ApiService] Railway test failed:', error.message);
+      this.log("[ApiService] Railway test failed:", error.message);
       result.details.railway = { error: error.message };
     }
 
-    console.log('[ApiService] External API test results:', result);
+    this.log("[ApiService] External API test results:", result);
     return result;
   }
 
   // Test connectivity
   async testConnectivity(): Promise<{ github: boolean; health: boolean }> {
     const result = { github: false, health: false };
-    
+
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const response = await fetch('https://api.github.com', { 
-        method: 'GET', 
-        signal: controller.signal 
+      const response = await fetch("https://api.github.com", {
+        method: "GET",
+        signal: controller.signal,
       });
       clearTimeout(timeoutId);
       result.github = response.ok;
-      console.log('[ApiService] GitHub connectivity:', response.status, response.ok);
+      this.log(
+        "[ApiService] GitHub connectivity:",
+        response.status,
+        response.ok,
+      );
     } catch (error: any) {
-      console.log('[ApiService] GitHub connectivity failed:', error.message);
+      this.log("[ApiService] GitHub connectivity failed:", error.message);
     }
 
     try {
-      const response = await this.get('/health');
+      const response = await this.get("/health");
       result.health = response.status === 200;
-      console.log('[ApiService] Health connectivity:', result.health);
+      this.log("[ApiService] Health connectivity:", result.health);
     } catch (error: any) {
-      console.log('[ApiService] Health connectivity failed:', error.message);
+      this.log("[ApiService] Health connectivity failed:", error.message);
     }
 
     return result;
@@ -724,32 +1717,66 @@ class ApiService {
 
   // Clear authentication
   async clearAuth() {
+    const currentAddress = this.userAddress;
     this.authToken = null;
     this.userAddress = null;
     this.signer = null;
-    console.log('[ApiService] Authentication cleared');
+    this.registrationIntent = null;
+    this.registrationPromise = null;
+    this.registrationCompletedAddress = null;
+    await AsyncStorageService.removeItem(REGISTRATION_INTENT_STORAGE_KEY);
+    await AsyncStorageService.removeItem(REGISTRATION_COMPLETED_STORAGE_KEY);
+    await this.clearCurrentProfileCache(currentAddress || undefined);
+    this.log("[ApiService] Authentication cleared");
   }
 
   // Register user (if needed)
-  async register(nickname: string, passportHash?: string): Promise<ApiResponse<UserProfile>> {
+  async register(
+    nickname: string,
+    passportHash?: string,
+    passportCountry?: string,
+  ): Promise<ApiResponse<UserProfile>> {
     try {
       if (!this.signer || !this.userAddress) {
-        throw new Error('Wallet not initialized for registration');
+        throw new Error("Wallet not initialized for registration");
       }
 
-      const signedPayload = await this.createSignedRequest('Register', {
+      const normalizedAddress = this.normalizeAddress(this.userAddress);
+      if (
+        normalizedAddress &&
+        passportHash &&
+        passportCountry &&
+        ethers.isHexString(passportHash, 32) &&
+        passportHash.toLowerCase() !== ethers.ZeroHash.toLowerCase()
+      ) {
+        await this.setRegistrationIntent({
+          nickname: String(nickname || "").trim(),
+          passportHash,
+          passportCountry: String(passportCountry || "")
+            .trim()
+            .toUpperCase(),
+          userAddress: normalizedAddress,
+        });
+      }
+
+      const signedPayload = await this.createSignedRequest("Register", {
         nickname,
-        passportHash: passportHash || '',
+        passportHash: passportHash || "",
+        passportCountry: passportCountry || "",
       });
 
-      const response = await this.post('/api/signed/register', signedPayload);
+      const response = await this.post("/api/signed/register", signedPayload);
+
+      if (normalizedAddress) {
+        await this.markRegistrationCompleted(normalizedAddress);
+      }
 
       return {
         success: true,
         data: response.data,
       };
     } catch (error: any) {
-      console.error('[ApiService] Registration failed:', error);
+      console.error("[ApiService] Registration failed:", error);
       return {
         success: false,
         error: error.message,
@@ -758,128 +1785,182 @@ class ApiService {
   }
 
   // Vote on post with Merkle proof verification
-  async voteOnPost(postId: string, voteOption: string | number, verificationProof?: any): Promise<ApiResponse<any>> {
+  async voteOnPost(
+    postId: string,
+    voteOption: string | number,
+    verificationProof?: any,
+  ): Promise<ApiResponse<any>> {
     try {
-      if (!this.signer || !this.userAddress) {
-        throw new Error('Wallet not initialized for voting');
-      }
+      const response = await this.runWithRegistrationRetry(
+        async () => {
+          if (!this.signer || !this.userAddress) {
+            throw new Error("Wallet not initialized for voting");
+          }
 
-      console.log('[ApiService] 🗳️ Voting on post with Merkle verification...');
-      
-      // Special logging for post_commandment_1
-      if (postId === 'post_commandment_1') {
-        console.log('[ApiService] 🎯 VOTING ON post_commandment_1:');
-        console.log('[ApiService] Post ID:', postId);
-        console.log('[ApiService] Vote Option:', voteOption);
-        console.log('[ApiService] Signer Address:', this.userAddress);
-        console.log('[ApiService] Has Verification Proof:', !!verificationProof);
-        if (verificationProof) {
-          console.log('[ApiService] Verification Proof Structure:', JSON.stringify(verificationProof, null, 2));
-        }
-      }
+          this.log("[ApiService] 🗳️ Voting on post with Merkle verification...");
 
-      // Create verification object with all required fields
-      let verification = null;
-      if (verificationProof && typeof verificationProof === 'object') {
-        // Check if proof timestamp is too old (server allows 300s window)
-        const currentTime = Math.floor(Date.now() / 1000);
-        const proofAge = currentTime - verificationProof.timestamp;
-        
-        console.log('[ApiService] Timestamp validation:', {
-          currentTime: currentTime,
-          proofTimestamp: verificationProof.timestamp,
-          proofAge: proofAge,
-          maxAllowed: 300,
-          isValid: Math.abs(proofAge) <= 300
-        });
-        
-        // If proof is too old, we need to regenerate it
-        if (Math.abs(proofAge) > 300) {
-          console.log('[ApiService] ⚠️ Verification proof is too old, need to regenerate');
-          throw new Error('Verification proof expired. Please try voting again.');
-        }
+          if (postId === "post_commandment_1") {
+            this.log("[ApiService] 🎯 VOTING ON post_commandment_1:");
+            this.log("[ApiService] Post ID:", postId);
+            this.log("[ApiService] Vote Option:", voteOption);
+            this.log("[ApiService] Signer Address:", this.userAddress);
+            this.log("[ApiService] Has Verification Proof:", !!verificationProof);
+            if (verificationProof) {
+              this.log(
+                "[ApiService] Verification Proof Structure:",
+                JSON.stringify(verificationProof, null, 2),
+              );
+            }
+          }
 
-        // Use the original nonce and timestamp from the verification proof
-        // (these were used when the signature was generated)
-        verification = {
-          signature: verificationProof.signature,
-          merkleRoot: verificationProof.merkleRoot,
-          merkleProof: verificationProof.merkleProof,
-          merkleLeaf: verificationProof.merkleLeaf,
-          postId: postId,
-          voteOption: voteOption.toString(),
-          nonce: verificationProof.nonce,
-          timestamp: verificationProof.timestamp
-        };
+          let verification = null;
+          if (verificationProof && typeof verificationProof === "object") {
+            const currentTime = Math.floor(Date.now() / 1000);
+            const proofAge = currentTime - verificationProof.timestamp;
 
-        console.log('[ApiService] Created verification object:', {
-          hasSignature: !!verification.signature,
-          merkleRoot: verification.merkleRoot?.substring(0, 10) + '...',
-          merkleProofLength: verification.merkleProof?.length,
-          merkleLeaf: verification.merkleLeaf?.substring(0, 10) + '...',
-          postId: verification.postId,
-          voteOption: verification.voteOption,
-          nonce: verification.nonce,
-          timestamp: verification.timestamp
-        });
-      } else {
-        console.log('[ApiService] ❌ No verification proof provided in vote request');
-        throw new Error('Verification proof required for voting');
-      }
+            this.log("[ApiService] Timestamp validation:", {
+              currentTime: currentTime,
+              proofTimestamp: verificationProof.timestamp,
+              proofAge: proofAge,
+              maxAllowed: 300,
+              isValid: Math.abs(proofAge) <= 300,
+            });
 
-      // Create request body in correct format for server
-      const requestBody = {
-        voteOption: voteOption.toString(),
-        verification: verification
-      };
+            if (Math.abs(proofAge) > 300) {
+              this.log(
+                "[ApiService] ⚠️ Verification proof is too old, need to regenerate",
+              );
+              throw new Error(
+                "Verification proof expired. Please try voting again.",
+              );
+            }
 
-      console.log('[ApiService] Request body structure:', {
-        voteOption: requestBody.voteOption,
-        hasVerification: !!requestBody.verification,
-        verificationKeys: requestBody.verification ? Object.keys(requestBody.verification) : []
-      });
+            verification = {
+              signature: verificationProof.signature,
+              merkleRoot: verificationProof.merkleRoot,
+              merkleProof: verificationProof.merkleProof,
+              merkleLeaf: verificationProof.merkleLeaf,
+              postId: postId,
+              voteOption: voteOption.toString(),
+              nonce: verificationProof.nonce,
+              timestamp: verificationProof.timestamp,
+              ...(verificationProof.ageRange !== undefined
+                ? { ageRange: Number(verificationProof.ageRange) }
+                : {}),
+              ...(verificationProof.country
+                ? { country: String(verificationProof.country).toUpperCase() }
+                : {}),
+              ...(verificationProof.passportHash
+                ? { passportHash: verificationProof.passportHash }
+                : {}),
+              ...(verificationProof.ageRangeProof
+                ? { ageRangeProof: verificationProof.ageRangeProof }
+                : {}),
+            };
 
-      console.log('[ApiService] Full request body being sent:', JSON.stringify(requestBody, null, 2));
+            this.log("[ApiService] Created verification object:", {
+              hasSignature: !!verification.signature,
+              merkleRoot: verification.merkleRoot?.substring(0, 10) + "...",
+              merkleProofLength: verification.merkleProof?.length,
+              merkleLeaf: verification.merkleLeaf?.substring(0, 10) + "...",
+              postId: verification.postId,
+              voteOption: verification.voteOption,
+              nonce: verification.nonce,
+              timestamp: verification.timestamp,
+              hasPassportBoundFields:
+                verification.ageRange !== undefined &&
+                typeof verification.country === "string" &&
+                typeof verification.passportHash === "string",
+            });
+          } else {
+            this.log(
+              "[ApiService] ❌ No verification proof provided in vote request",
+            );
+            throw new Error("Verification proof required for voting");
+          }
 
-      // Use correct endpoint: /api/posts/{postId}/vote
-      const response = await this.post(`/api/posts/${postId}/vote`, requestBody);
+          const requestBody = {
+            voteOption: voteOption.toString(),
+            verification: verification,
+          };
+
+          this.log("[ApiService] Request body structure:", {
+            voteOption: requestBody.voteOption,
+            hasVerification: !!requestBody.verification,
+            verificationKeys: requestBody.verification
+              ? Object.keys(requestBody.verification)
+              : [],
+          });
+
+          this.log(
+            "[ApiService] Full request body being sent:",
+            JSON.stringify(requestBody, null, 2),
+          );
+
+          return this.post(`/api/posts/${postId}/vote`, requestBody);
+        },
+        {
+          registrationRequired: true,
+          reason: "vote-on-post",
+        },
+      );
 
       return {
         success: true,
         data: response.data,
       };
     } catch (error: any) {
-      console.error('[ApiService] Vote failed:', error);
-      console.error('[ApiService] Error response details:', {
+      console.error("[ApiService] Vote failed:", error);
+      console.error("[ApiService] Error response details:", {
         status: error.response?.status,
         data: error.response?.data,
         message: error.message,
-        stack: error.stack
+        stack: error.stack,
       });
       return {
         success: false,
         error: error.message,
-        serverResponse: error.response?.data
+        serverResponse: error.response?.data,
       };
     }
   }
 
-  // Check voting eligibility for a proposal
+  async getVoteReceipt(
+    postId: string,
+    nullifier: string,
+  ): Promise<ApiResponse<any>> {
+    try {
+      const response = await this.get(
+        `/api/posts/${postId}/vote-receipt/${nullifier}`,
+      );
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Failed to fetch vote receipt",
+      };
+    }
+  }
+
+  // Check voting eligibility for an initiative
   async checkVotingEligibility(postId: string): Promise<ApiResponse<any>> {
     try {
-      console.log('[ApiService] Checking voting eligibility for post:', postId);
+      this.log("[ApiService] Checking voting eligibility for post:", postId);
 
-      const response = await this.get(`/api/proposal/${postId}/eligibility`);
+      const response = await this.get(`/api/posts/${postId}/vote-restrictions`);
 
       return {
         success: true,
         data: response.data,
       };
     } catch (error: any) {
-      console.error('[ApiService] Eligibility check failed:', error);
+      console.error("[ApiService] Eligibility check failed:", error);
       return {
         success: false,
-        error: error.message || 'Failed to check eligibility',
+        error: error.message || "Failed to check eligibility",
       };
     }
   }
@@ -887,7 +1968,7 @@ class ApiService {
   // Get a single post by ID
   async getPost(postId: string): Promise<ApiResponse<any>> {
     try {
-      console.log('[ApiService] Getting post:', postId);
+      this.log("[ApiService] Getting post:", postId);
 
       // Try unsigned endpoint first
       const response = await this.get(`/api/posts/${postId}`);
@@ -897,30 +1978,363 @@ class ApiService {
         data: response.data,
       };
     } catch (error: any) {
-      console.error('[ApiService] Failed to get post:', error);
+      console.error("[ApiService] Failed to get post:", error);
       return {
         success: false,
-        error: error.message || 'Failed to fetch post',
+        error: error.message || "Failed to fetch post",
+      };
+    }
+  }
+
+  // Get comments for a post
+  async getPostComments(
+    postId: string,
+  ): Promise<ApiResponse<{ comments: PostComment[]; total: number }>> {
+    try {
+      const normalizedPostId = String(postId || "").trim();
+      const defaultLimit = 200;
+
+      if (this.signer && this.userAddress) {
+        try {
+          const signedPayload = await this.createSignedRequest(
+            "GetPostComments",
+            {
+              postId: normalizedPostId,
+              limit: defaultLimit,
+            },
+          );
+          const signedResponse = await this.post(
+            "/api/signed/post-comments",
+            signedPayload,
+          );
+          return {
+            success: true,
+            data: {
+              comments: Array.isArray(signedResponse.data?.comments)
+                ? signedResponse.data.comments
+                : [],
+              total: Number(signedResponse.data?.total || 0),
+            },
+          };
+        } catch (signedError: any) {
+          this.log(
+            "[ApiService] Signed comments request failed, fallback to public endpoint",
+            signedError?.message || signedError,
+          );
+        }
+      }
+
+      const response = await this.get(
+        `/api/posts/${normalizedPostId}/comments`,
+      );
+      return {
+        success: true,
+        data: {
+          comments: Array.isArray(response.data?.comments)
+            ? response.data.comments
+            : [],
+          total: Number(response.data?.total || 0),
+        },
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Failed to fetch comments",
+      };
+    }
+  }
+
+  // Create comment for a post
+  async createPostComment(
+    postId: string,
+    content: string,
+  ): Promise<ApiResponse<any>> {
+    try {
+      const normalizedContent = String(content || "").trim();
+      if (!normalizedContent) {
+        throw new Error("Comment content is required");
+      }
+      if (normalizedContent.length > 2000) {
+        throw new Error("Comment exceeds max length (2000)");
+      }
+
+      const response = await this.runWithRegistrationRetry(
+        async () => {
+          if (!this.signer || !this.userAddress) {
+            const { WalletService } = require("./WalletService");
+            const walletService = WalletService.getInstance();
+            const currentWallet = walletService.getCurrentWallet();
+            if (currentWallet) {
+              await this.initialize(currentWallet);
+            }
+          }
+          if (!this.signer || !this.userAddress) {
+            throw new Error("Wallet not initialized for comment submission");
+          }
+
+          const signedPayload = await this.createSignedRequest("CreateComment", {
+            content: normalizedContent,
+            parentPostId: postId,
+          });
+
+          return this.post("/api/signed/post-submission", signedPayload);
+        },
+        {
+          registrationRequired: true,
+          reason: "create-comment",
+        },
+      );
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Failed to create comment",
+      };
+    }
+  }
+
+  async reportComment(
+    commentId: string,
+    reason: string,
+  ): Promise<ApiResponse<{ report: any; duplicate?: boolean }>> {
+    try {
+      const normalizedCommentId = String(commentId || "").trim();
+      const normalizedReason = String(reason || "")
+        .trim()
+        .toLowerCase();
+
+      if (!normalizedCommentId) {
+        throw new Error("commentId is required");
+      }
+      if (!normalizedReason) {
+        throw new Error("reason is required");
+      }
+
+      const response = await this.runWithRegistrationRetry(
+        async () => {
+          if (!this.signer || !this.userAddress) {
+            const { WalletService } = require("./WalletService");
+            const walletService = WalletService.getInstance();
+            const currentWallet = walletService.getCurrentWallet();
+            if (currentWallet) {
+              await this.initialize(currentWallet);
+            }
+          }
+          if (!this.signer || !this.userAddress) {
+            throw new Error("Wallet not initialized for comment report");
+          }
+
+          const signedPayload = await this.createSignedRequest("ReportComment", {
+            commentId: normalizedCommentId,
+            reason: normalizedReason,
+          });
+
+          return this.post("/api/signed/comment-report", signedPayload);
+        },
+        {
+          registrationRequired: true,
+          reason: "comment-report",
+        },
+      );
+      return {
+        success: true,
+        data: {
+          report: response.data?.report,
+          duplicate: response.data?.duplicate === true,
+        },
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Failed to submit comment report",
+      };
+    }
+  }
+
+  // Get lottery details for an initiative post
+  async getPostLottery(postId: string): Promise<ApiResponse<any>> {
+    try {
+      const response = await this.get(`/api/posts/${postId}/lottery`);
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Failed to fetch lottery details",
+      };
+    }
+  }
+
+  // Get winner/claim status for current wallet in post lottery
+  async getPostLotteryParticipant(postId: string): Promise<ApiResponse<any>> {
+    try {
+      let walletAddress = this.userAddress;
+      if (!walletAddress) {
+        const { WalletService } = require("./WalletService");
+        const walletService = WalletService.getInstance();
+        walletAddress = walletService.getAddress();
+      }
+
+      if (!walletAddress) {
+        throw new Error("Wallet not initialized");
+      }
+
+      const response = await this.get(
+        `/api/posts/${postId}/lottery/participant/${walletAddress}`,
+      );
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Failed to fetch lottery participant state",
+      };
+    }
+  }
+
+  // Donate native token to initiative lottery contract
+  async donateToPostLottery(
+    postId: string,
+    amountEth: string,
+  ): Promise<ApiResponse<any>> {
+    try {
+      const lottery = await this.getPostLottery(postId);
+      if (!lottery.success || !lottery.data?.lottery?.contractAddress) {
+        throw new Error(
+          "Lottery contract is not available for this initiative",
+        );
+      }
+
+      const { WalletService } = require("./WalletService");
+      const walletService = WalletService.getInstance();
+      const txHash = await walletService.sendTransaction(
+        lottery.data.lottery.contractAddress,
+        amountEth,
+      );
+
+      return {
+        success: true,
+        data: {
+          txHash,
+          contractAddress: lottery.data.lottery.contractAddress,
+          amountEth,
+        },
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Failed to donate to lottery",
+      };
+    }
+  }
+
+  async claimPostLotteryReward(postId: string): Promise<ApiResponse<any>> {
+    try {
+      const lottery = await this.getPostLottery(postId);
+      if (!lottery.success || !lottery.data?.lottery?.contractAddress) {
+        throw new Error(
+          "Lottery contract is not available for this initiative",
+        );
+      }
+
+      const { WalletService } = require("./WalletService");
+      const walletService = WalletService.getInstance();
+      const txHash = await walletService.claimLotteryReward(
+        lottery.data.lottery.contractAddress,
+      );
+
+      return {
+        success: true,
+        data: {
+          txHash,
+          contractAddress: lottery.data.lottery.contractAddress,
+        },
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Failed to claim lottery reward",
       };
     }
   }
 
   // Check app version
-  async checkVersion(): Promise<ApiResponse<any>> {
+  async checkVersion(params?: {
+    platform?: string;
+    appVersion?: string;
+  }): Promise<ApiResponse<any>> {
     try {
-      console.log('[ApiService] Checking app version...');
+      this.log("[ApiService] Checking app version...");
 
-      const response = await this.get('/api/version');
+      const query: Record<string, string> = {};
+      if (params?.platform) query.platform = params.platform;
+      if (params?.appVersion) query.appVersion = params.appVersion;
+
+      const response = await this.get("/api/version", query);
 
       return {
         success: true,
         data: response.data,
       };
     } catch (error: any) {
-      console.error('[ApiService] Failed to check version:', error);
+      console.error("[ApiService] Failed to check version:", error);
       return {
         success: false,
-        error: error.message || 'Failed to check version',
+        error: error.message || "Failed to check version",
+      };
+    }
+  }
+
+  // Public transaction log (read-only)
+  async getPublicTransactionLog(params?: {
+    limit?: number;
+    status?: string;
+    action?: string;
+    includeDerived?: boolean;
+  }): Promise<
+    ApiResponse<{
+      items: PublicTransactionLogItem[];
+      total: number;
+      returned: number;
+      includeDerived: boolean;
+      summary?: {
+        byStatus?: Record<string, number>;
+        byAction?: Record<string, number>;
+      };
+    }>
+  > {
+    try {
+      const query: Record<string, string> = {};
+      if (params?.limit) query.limit = String(params.limit);
+      if (params?.status) query.status = String(params.status).trim();
+      if (params?.action) query.action = String(params.action).trim();
+      if (params?.includeDerived !== undefined) {
+        query.includeDerived = params.includeDerived ? "1" : "0";
+      }
+
+      const response = await this.get("/api/admin/public/transactions", query);
+      const payload = response.data || {};
+      return {
+        success: true,
+        data: {
+          items: Array.isArray(payload.items) ? payload.items : [],
+          total: Number(payload.total || 0),
+          returned: Number(payload.returned || 0),
+          includeDerived: Boolean(payload.includeDerived),
+          summary: payload.summary,
+        },
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Failed to fetch transaction log",
       };
     }
   }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,15 +7,15 @@ import {
   Alert,
   Platform,
   PermissionsAndroid,
-  ActivityIndicator,
   StatusBar,
   ScrollView,
-  Animated,
 } from 'react-native';
 import { useNavigation } from '../contexts/NavigationContext';
 import Logo from '../components/Logo';
 import Icon from '../components/Icon';
 import { useLocalization } from '../hooks/useLocalization';
+import { useTheme } from '../contexts/ThemeContext';
+import { monoFontFamily } from '../styles/tokens';
 
 interface MRZData {
   documentNumber: string;
@@ -25,7 +25,10 @@ interface MRZData {
 
 const MRZScannerScreen = () => {
   console.log('[MRZScannerScreen] Component initializing');
-  
+
+  const { theme, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
   let navigation;
   try {
     navigation = useNavigation();
@@ -34,25 +37,7 @@ const MRZScannerScreen = () => {
     console.error('[MRZScannerScreen] Error getting navigation context:', error);
     navigation = null;
   }
-  
-  if (!navigation || !navigation.navigate || !navigation.goBack) {
-    console.error('[MRZScannerScreen] Navigation context is invalid:', navigation);
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-        <Text style={{ fontSize: 18, color: 'red', textAlign: 'center', marginBottom: 10 }}>
-          Navigation Error
-        </Text>
-        <Text style={{ fontSize: 14, color: '#666', textAlign: 'center' }}>
-          Navigation context not available. Please restart the app.
-        </Text>
-      </View>
-    );
-  }
-  
-  const { navigate, goBack } = navigation;
   const { t } = useLocalization();
-  console.log('[MRZScannerScreen] Navigate function:', typeof navigate, 'GoBack function:', typeof goBack);
-  
   const [isScanning, setIsScanning] = useState(false);
 
   // Check if running on HarmonyOS
@@ -60,9 +45,9 @@ const MRZScannerScreen = () => {
     try {
       const { NativeModules } = require('react-native');
       return Platform.OS === 'android' && (
-        global.HarmonyOS || 
+        (global as any).HarmonyOS || 
         NativeModules?.HarmonyOSModule ||
-        (typeof __HARMONY__ !== 'undefined')
+        (typeof (global as any).__HARMONY__ !== 'undefined')
       );
     } catch {
       return false;
@@ -76,6 +61,22 @@ const MRZScannerScreen = () => {
     }
   }, []);
 
+  if (!navigation || !navigation.navigate || !navigation.goBack) {
+    console.error('[MRZScannerScreen] Navigation context is invalid:', navigation);
+    return (
+      <View style={styles.navigationErrorContainer}>
+        <Text style={styles.navigationErrorTitle}>
+          {t('mrzScanner.navigationErrorTitle')}
+        </Text>
+        <Text style={styles.navigationErrorText}>
+          {t('mrzScanner.navigationErrorMessage')}
+        </Text>
+      </View>
+    );
+  }
+
+  const { navigate, goBack } = navigation;
+  console.log('[MRZScannerScreen] Navigate function:', typeof navigate, 'GoBack function:', typeof goBack);
 
   const startMRZScan = async (documentType: 'passport' | 'idcard') => {
     console.log('[MRZScannerScreen] startMRZScan button clicked for:', documentType);
@@ -111,15 +112,15 @@ const MRZScannerScreen = () => {
         const granted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.CAMERA,
           {
-            title: 'Camera Permission',
-            message: 'This app needs camera access to scan passport MRZ',
-            buttonNeutral: 'Ask Me Later',
-            buttonNegative: 'Cancel',
-            buttonPositive: 'OK',
+            title: t('passport.cameraPermissionTitle'),
+            message: t('passport.cameraPermissionMessage'),
+            buttonNeutral: t('mrzScanner.askMeLater'),
+            buttonNegative: t('common.cancel'),
+            buttonPositive: t('common.ok'),
           }
         );
         if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          Alert.alert('Permission Denied', 'Camera permission is required to scan MRZ');
+          Alert.alert(t('passport.permissionDenied'), t('passport.cameraPermissionRequired'));
           setIsScanning(false);
           return;
         }
@@ -130,15 +131,32 @@ const MRZScannerScreen = () => {
       }
     }
     
-    // Launch native MRZ scanner
     console.log('[MRZScannerScreen] Launching native MRZ scanner');
     const { NativeModules, NativeEventEmitter } = require('react-native');
-    const { PassportReader } = NativeModules;
+    let PassportReader = NativeModules.PassportReader;
+    
+    if (!PassportReader) {
+      PassportReader = NativeModules.PassportReaderModule;
+      console.log('[MRZScannerScreen] Trying PassportReaderModule:', PassportReader);
+    }
+    
+    if (!PassportReader) {
+      const passportModules = Object.keys(NativeModules).filter(key => 
+        key.toLowerCase().includes('passport') || key.toLowerCase().includes('reader')
+      );
+      console.log('[MRZScannerScreen] Found passport-related modules:', passportModules);
+      if (passportModules.length > 0) {
+        PassportReader = NativeModules[passportModules[0]];
+        console.log('[MRZScannerScreen] Using module:', passportModules[0], PassportReader);
+      }
+    }
     
     console.log('[MRZScannerScreen] NativeModules available:', Object.keys(NativeModules));
     console.log('[MRZScannerScreen] PassportReader module:', PassportReader);
+    console.log('[MRZScannerScreen] PassportReader methods:', PassportReader ? Object.getOwnPropertyNames(PassportReader) : 'Module not available');
     
-    if (PassportReader && PassportReader.startMRZScanner) {
+    if (PassportReader && typeof PassportReader.startMRZScanner === 'function') {
+      console.log('[MRZScannerScreen] ✅ PassportReader.startMRZScanner function found!');
       console.log('[MRZScannerScreen] Calling PassportReader.startMRZScanner()');
       
       // Set up event listeners with proper checks
@@ -206,11 +224,11 @@ const MRZScannerScreen = () => {
               console.log('[MRZScannerScreen] Navigation to PassportScanScreen completed');
             } else {
               console.error('[MRZScannerScreen] Navigate function not available');
-              Alert.alert('Navigation Error', 'Cannot navigate to passport scan.');
+              Alert.alert(t('mrzScanner.navigationErrorTitle'), t('mrzScanner.cannotNavigateToPassportScan'));
             }
           } catch (navError) {
             console.error('[MRZScannerScreen] Error during navigation:', navError);
-            Alert.alert('Navigation Error', 'Failed to navigate to passport scan: ' + navError.message);
+            Alert.alert(t('mrzScanner.navigationErrorTitle'), `${t('mrzScanner.failedToNavigateToPassportScan')}: ${navError.message}`);
           }
         } catch (error) {
           console.error('[MRZScannerScreen] Error in mrzScanSuccess handler:', error);
@@ -222,7 +240,7 @@ const MRZScannerScreen = () => {
             errorListener.remove();
           }
           setIsScanning(false);
-          Alert.alert('Error', 'Failed to process MRZ data: ' + error.message);
+          Alert.alert(t('common.error'), `${t('mrzScanner.failedToProcessMrzData')}: ${error.message}`);
         }
       });
       
@@ -238,7 +256,7 @@ const MRZScannerScreen = () => {
         setIsScanning(false);
         
         console.log('[MRZScannerScreen] Showing error alert');
-        Alert.alert('Scan Error', error.message);
+        Alert.alert(t('mrzScanner.scanErrorTitle'), error.message);
       });
       
       // Start the appropriate scanner based on document type
@@ -256,19 +274,19 @@ const MRZScannerScreen = () => {
             successListener.remove();
             errorListener.remove();
             setIsScanning(false);
-            Alert.alert('Error', 'Failed to start camera scanner: ' + (error?.message || 'Unknown error'));
+            Alert.alert(t('common.error'), `${t('mrzScanner.failedToStartCameraScanner')}: ${error?.message || t('common.unknown')}`);
           });
       } catch (syncError) {
         console.error('[MRZScannerScreen] Sync error starting scanner:', syncError);
         successListener.remove();
         errorListener.remove();
         setIsScanning(false);
-        Alert.alert('Error', 'Failed to start scanner: ' + (syncError?.message || 'Unknown error'));
+        Alert.alert(t('common.error'), `${t('mrzScanner.failedToStartScanner')}: ${syncError?.message || t('common.unknown')}`);
       }
     } else {
       console.log('[MRZScannerScreen] PassportReader module not available');
       setIsScanning(false);
-      Alert.alert('Not Available', 'Camera scanner not available.');
+      Alert.alert(t('mrzScanner.notAvailableTitle'), t('mrzScanner.cameraScannerNotAvailable'));
     }
   };
 
@@ -278,7 +296,7 @@ const MRZScannerScreen = () => {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={theme.background} />
       
       {/* Header with small logo */}
       <View style={styles.header}>
@@ -304,8 +322,10 @@ const MRZScannerScreen = () => {
               navigate('Auth');
             }
           }}
-          style={styles.backButton}>
-          <Text style={styles.backButtonText}>← Back</Text>
+          style={styles.backButton}
+          accessibilityRole="button"
+          accessibilityLabel={t('mrzScanner.backToPreviousScreen')}>
+          <Text style={styles.backButtonText}>← {t('common.back')}</Text>
         </TouchableOpacity>
       </View>
 
@@ -322,7 +342,7 @@ const MRZScannerScreen = () => {
           <View style={styles.processContainer}>
             <View style={styles.processStep}>
               <View style={[styles.stepIndicator, styles.activeStep]}>
-                <Text style={[styles.stepNumber, {color: '#FFFFFF'}]}>1</Text>
+                <Text style={[styles.stepNumber, {color: theme.background}]}>1</Text>
               </View>
               <Text style={styles.stepTitle}>{t('passport.scanMrz')}</Text>
               <Text style={styles.stepDescription}>{t('passport.stepOneOfTwo')}</Text>
@@ -344,16 +364,20 @@ const MRZScannerScreen = () => {
             <TouchableOpacity
               onPress={() => startMRZScan('passport')}
               activeOpacity={0.8}
-              style={styles.primaryButton}>
-              <Icon name="camera" variant="filled" size={20} color="#FFFFFF" style={{marginRight: 8}} />
+              style={styles.primaryButton}
+              accessibilityRole="button"
+              accessibilityLabel={t('mrzScanner.scanPassportWithCamera')}>
+              <Icon name="camera" variant="filled" size={20} color={theme.onPrimary} style={{marginRight: 8}} />
               <Text style={styles.buttonText}>{t('auth.scanPassport')}</Text>
             </TouchableOpacity>
             
             <TouchableOpacity
               onPress={() => startMRZScan('idcard')}
               activeOpacity={0.8}
-              style={styles.secondaryButtonAlt}>
-              <Icon name="camera" variant="filled" size={20} color="#1D9BF0" style={{marginRight: 8}} />
+              style={styles.secondaryButtonAlt}
+              accessibilityRole="button"
+              accessibilityLabel={t('mrzScanner.scanIdCardWithCamera')}>
+              <Icon name="camera" variant="filled" size={20} color={theme.primary} style={{marginRight: 8}} />
               <Text style={styles.secondaryButtonTextAlt}>{t('auth.scanIdCard')}</Text>
             </TouchableOpacity>
           </View>
@@ -369,8 +393,10 @@ const MRZScannerScreen = () => {
           <TouchableOpacity
             onPress={handleManualInput}
             activeOpacity={0.8}
-            style={styles.secondaryButton}>
-            <Icon name="document" variant="outline" size={20} color="#1D9BF0" style={{marginRight: 8}} />
+            style={styles.secondaryButton}
+            accessibilityRole="button"
+            accessibilityLabel={t('mrzScanner.enterMrzDetailsManually')}>
+            <Icon name="document" variant="outline" size={20} color={theme.primary} style={{marginRight: 8}} />
             <Text style={styles.secondaryButtonText}>{t('auth.enterManually')}</Text>
           </TouchableOpacity>
 
@@ -401,10 +427,29 @@ const MRZScannerScreen = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ReturnType<typeof useTheme>['theme']) => StyleSheet.create({
+  navigationErrorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: theme.background,
+  },
+  navigationErrorTitle: {
+    fontSize: 18,
+    color: theme.error,
+    textAlign: 'center',
+    marginBottom: 10,
+    fontWeight: '700',
+  },
+  navigationErrorText: {
+    fontSize: 14,
+    color: theme.textSecondary,
+    textAlign: 'center',
+  },
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.background,
   },
   header: {
     flexDirection: 'row',
@@ -413,16 +458,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'ios' ? 60 : 40,
     paddingBottom: 10,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.background,
     borderBottomWidth: 1,
-    borderBottomColor: '#EFF3F4',
+    borderBottomColor: theme.border,
   },
   backButton: {
     padding: 8,
   },
   backButtonText: {
     fontSize: 16,
-    color: '#1D9BF0',
+    color: theme.primary,
     fontWeight: '600',
   },
   scrollContainer: {
@@ -440,13 +485,13 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '800',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 8,
     textAlign: 'center',
   },
   subtitle: {
     fontSize: 16,
-    color: '#536471',
+    color: theme.textSecondary,
     textAlign: 'center',
     marginBottom: 32,
   },
@@ -465,40 +510,40 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: theme.border,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 8,
   },
   activeStep: {
-    backgroundColor: '#1D9BF0',
+    backgroundColor: theme.primary,
   },
   stepNumber: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#9CA3AF',
+    color: theme.textTertiary,
   },
   stepTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 4,
     textAlign: 'center',
   },
   stepDescription: {
     fontSize: 12,
-    color: '#536471',
+    color: theme.textSecondary,
     textAlign: 'center',
   },
   processLine: {
     flex: 0.3,
     height: 2,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: theme.border,
     marginHorizontal: 10,
     marginBottom: 40,
   },
   primaryButton: {
-    backgroundColor: '#000000',
+    backgroundColor: theme.primary,
     paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 9999,
@@ -513,38 +558,38 @@ const styles = StyleSheet.create({
   buttonText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: theme.onPrimary,
   },
   infoContainer: {
-    backgroundColor: '#F7F9FA',
+    backgroundColor: theme.surface,
     borderRadius: 16,
     padding: 16,
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: '#EFF3F4',
+    borderColor: theme.border,
   },
   infoTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 12,
   },
   infoText: {
     fontSize: 14,
-    color: '#536471',
+    color: theme.textSecondary,
     lineHeight: 20,
   },
   visualGuide: {
-    backgroundColor: '#F8F9FA',
+    backgroundColor: theme.surface,
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: theme.border,
   },
   visualTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 12,
     textAlign: 'center',
   },
@@ -555,7 +600,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   mrzLine: {
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontFamily: monoFontFamily,
     fontSize: 10,
     color: '#00FF00',
     letterSpacing: 1,
@@ -569,12 +614,12 @@ const styles = StyleSheet.create({
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: theme.border,
   },
   dividerText: {
     marginHorizontal: 16,
     fontSize: 14,
-    color: '#9CA3AF',
+    color: theme.textTertiary,
     fontWeight: '500',
   },
   // Scan buttons container
@@ -584,7 +629,7 @@ const styles = StyleSheet.create({
   },
   // Secondary button styles
   secondaryButton: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.card,
     paddingVertical: 16,
     paddingHorizontal: 24,
     borderRadius: 12,
@@ -593,15 +638,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 20,
     borderWidth: 2,
-    borderColor: '#1D9BF0',
+    borderColor: theme.primary,
   },
   secondaryButtonText: {
-    color: '#1D9BF0',
+    color: theme.primary,
     fontSize: 16,
     fontWeight: '700',
   },
   secondaryButtonAlt: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.card,
     paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 9999,
@@ -609,13 +654,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: '#1D9BF0',
+    borderColor: theme.primary,
   },
   secondaryButtonTextAlt: {
-    color: '#1D9BF0',
+    color: theme.primary,
     fontSize: 16,
     fontWeight: '700',
   },
 });
 
 export default MRZScannerScreen;
+

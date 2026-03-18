@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,9 +7,11 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   ScrollView,
-  Alert,
 } from 'react-native';
 import { NFCService } from '../services/NFCService';
+import { useTheme } from '../contexts/ThemeContext';
+import { monoFontFamily } from '../styles/tokens';
+import { useLocalization } from '../hooks/useLocalization';
 
 interface NFCScanModalProps {
   visible: boolean;
@@ -24,6 +26,9 @@ export const NFCScanModal: React.FC<NFCScanModalProps> = ({
   onSuccess,
   mrzData
 }) => {
+  const { theme } = useTheme();
+  const { t } = useLocalization();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [scanStatus, setScanStatus] = useState<'ready' | 'scanning' | 'error' | 'success'>('ready');
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [currentStep, setCurrentStep] = useState('');
@@ -40,39 +45,39 @@ export const NFCScanModal: React.FC<NFCScanModalProps> = ({
     setIsScanning(true);
     setScanStatus('scanning');
     setDebugLog([]);
-    setCurrentStep('Initializing NFC...');
-    addDebugLog('Starting passport scan');
-    addDebugLog(`MRZ Data: ${mrzData || 'Using demo data'}`);
+    setCurrentStep(t('nfcScanModal.initializingNfc'));
+    addDebugLog(t('nfcScanModal.startingPassportScan'));
+    addDebugLog(t('nfcScanModal.mrzDataLog', { mrzData: mrzData || t('nfcScanModal.usingDemoData') }));
 
     try {
       // Check NFC availability first
-      setCurrentStep('Checking NFC availability...');
-      addDebugLog('Checking NFC availability');
+      setCurrentStep(t('nfcScanModal.checkingNfcAvailability'));
+      addDebugLog(t('nfcScanModal.checkingNfcAvailability'));
       
       const nfcEnabled = await nfcService.checkNFCEnabled();
-      addDebugLog(`NFC enabled: ${nfcEnabled}`);
+      addDebugLog(t('nfcScanModal.nfcEnabledLog', { enabled: String(nfcEnabled) }));
       
       if (!nfcEnabled) {
-        throw new Error('NFC is disabled. Please enable NFC in settings.');
+        throw new Error(t('nfcScanModal.nfcDisabledError'));
       }
 
-      setCurrentStep('Starting passport scan...');
-      addDebugLog('Calling NFCService.startPassportScan');
+      setCurrentStep(t('nfcScanModal.startingPassportScanStep'));
+      addDebugLog(t('nfcScanModal.callingStartPassportScan'));
       
       const passportData = await nfcService.startPassportScan(mrzData);
       
-      addDebugLog('Passport scan completed successfully');
+      addDebugLog(t('nfcScanModal.passportScanCompleted'));
       setScanStatus('success');
-      setCurrentStep('Scan completed!');
+      setCurrentStep(t('nfcScanModal.scanCompleted'));
       
       setTimeout(() => {
         onSuccess(passportData);
       }, 1000);
       
     } catch (error: any) {
-      addDebugLog(`Error: ${error.message}`);
+      addDebugLog(`${t('common.error')}: ${error.message}`);
       setScanStatus('error');
-      setCurrentStep(`Error: ${error.message}`);
+      setCurrentStep(`${t('common.error')}: ${error.message}`);
     } finally {
       setIsScanning(false);
     }
@@ -95,20 +100,20 @@ export const NFCScanModal: React.FC<NFCScanModalProps> = ({
         return (
           <View style={styles.statusContainer}>
             <Text style={styles.statusIcon}>📱</Text>
-            <Text style={styles.statusText}>Ready to scan passport</Text>
+            <Text style={styles.statusText}>{t('nfcScanModal.readyToScanPassport')}</Text>
             <Text style={styles.instructionText}>
-              Place your passport on the back of your phone when scanning starts
+              {t('nfcScanModal.placePassportInstruction')}
             </Text>
           </View>
         );
       case 'scanning':
         return (
           <View style={styles.statusContainer}>
-            <ActivityIndicator size="large" color="#4F46E5" />
-            <Text style={styles.statusText}>Scanning...</Text>
+            <ActivityIndicator size="large" color={theme.primary} />
+            <Text style={styles.statusText}>{t('nfcScanModal.scanning')}</Text>
             <Text style={styles.currentStep}>{currentStep}</Text>
             <Text style={styles.instructionText}>
-              Keep passport close to your phone's NFC antenna
+              {t('nfcScanModal.keepPassportNearAntenna')}
             </Text>
           </View>
         );
@@ -116,7 +121,7 @@ export const NFCScanModal: React.FC<NFCScanModalProps> = ({
         return (
           <View style={styles.statusContainer}>
             <Text style={styles.statusIcon}>❌</Text>
-            <Text style={styles.errorText}>Scan Failed</Text>
+            <Text style={styles.errorText}>{t('auth.scanFailed')}</Text>
             <Text style={styles.currentStep}>{currentStep}</Text>
           </View>
         );
@@ -124,7 +129,7 @@ export const NFCScanModal: React.FC<NFCScanModalProps> = ({
         return (
           <View style={styles.statusContainer}>
             <Text style={styles.statusIcon}>✅</Text>
-            <Text style={styles.successText}>Scan Successful!</Text>
+            <Text style={styles.successText}>{t('nfcScanModal.scanSuccessful')}</Text>
             <Text style={styles.currentStep}>{currentStep}</Text>
           </View>
         );
@@ -133,7 +138,7 @@ export const NFCScanModal: React.FC<NFCScanModalProps> = ({
 
   const renderDebugLog = () => (
     <View style={styles.debugContainer}>
-      <Text style={styles.debugTitle}>Debug Log:</Text>
+      <Text style={styles.debugTitle}>{t('nfcScanModal.debugLogTitle')}</Text>
       <ScrollView style={styles.debugScroll} showsVerticalScrollIndicator={false}>
         {debugLog.map((log, index) => (
           <Text key={index} style={styles.debugText}>
@@ -153,18 +158,18 @@ export const NFCScanModal: React.FC<NFCScanModalProps> = ({
             onPress={startScan}
             disabled={isScanning}
           >
-            <Text style={styles.scanButtonText}>Start NFC Scan</Text>
+            <Text style={styles.scanButtonText}>{t('passport.startNfcScan')}</Text>
           </TouchableOpacity>
           
           <TouchableOpacity
             style={styles.debugButton}
             onPress={() => {
-              addDebugLog('Testing debug log functionality');
-              addDebugLog('NFC Service initialized');
-              addDebugLog('Demo mode active');
+              addDebugLog(t('nfcScanModal.testingDebugLog'));
+              addDebugLog(t('nfcScanModal.nfcServiceInitialized'));
+              addDebugLog(t('nfcScanModal.demoModeActive'));
             }}
           >
-            <Text style={styles.debugButtonText}>Test Debug Log</Text>
+            <Text style={styles.debugButtonText}>{t('nfcScanModal.testDebugLog')}</Text>
           </TouchableOpacity>
         </>
       )}
@@ -178,7 +183,7 @@ export const NFCScanModal: React.FC<NFCScanModalProps> = ({
             setCurrentStep('');
           }}
         >
-          <Text style={styles.retryButtonText}>Try Again</Text>
+          <Text style={styles.retryButtonText}>{t('common.tryAgain')}</Text>
         </TouchableOpacity>
       )}
       
@@ -187,7 +192,7 @@ export const NFCScanModal: React.FC<NFCScanModalProps> = ({
         onPress={handleClose}
         disabled={isScanning}
       >
-        <Text style={styles.closeButtonText}>Close</Text>
+        <Text style={styles.closeButtonText}>{t('common.close')}</Text>
       </TouchableOpacity>
     </View>
   );
@@ -202,7 +207,7 @@ export const NFCScanModal: React.FC<NFCScanModalProps> = ({
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
           <View style={styles.header}>
-            <Text style={styles.title}>NFC Passport Scanner</Text>
+            <Text style={styles.title}>{t('nfcScanModal.title')}</Text>
           </View>
           
           {renderScanStatus()}
@@ -214,15 +219,15 @@ export const NFCScanModal: React.FC<NFCScanModalProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ReturnType<typeof useTheme>['theme']) => StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    backgroundColor: theme.overlay,
     justifyContent: 'center',
     alignItems: 'center',
   },
   modalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.modalBackground,
     borderRadius: 20,
     padding: 20,
     width: '90%',
@@ -235,7 +240,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#1F2937',
+    color: theme.text,
   },
   statusContainer: {
     alignItems: 'center',
@@ -248,35 +253,35 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#1F2937',
+    color: theme.text,
     marginBottom: 8,
   },
   errorText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#EF4444',
+    color: theme.error,
     marginBottom: 8,
   },
   successText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#10B981',
+    color: theme.success,
     marginBottom: 8,
   },
   currentStep: {
     fontSize: 14,
-    color: '#6B7280',
+    color: theme.textSecondary,
     textAlign: 'center',
     marginBottom: 8,
   },
   instructionText: {
     fontSize: 12,
-    color: '#9CA3AF',
+    color: theme.textTertiary,
     textAlign: 'center',
     fontStyle: 'italic',
   },
   debugContainer: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: theme.surface,
     borderRadius: 8,
     padding: 12,
     marginVertical: 15,
@@ -285,7 +290,7 @@ const styles = StyleSheet.create({
   debugTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: theme.text,
     marginBottom: 8,
   },
   debugScroll: {
@@ -293,53 +298,53 @@ const styles = StyleSheet.create({
   },
   debugText: {
     fontSize: 11,
-    color: '#6B7280',
-    fontFamily: 'monospace',
+    color: theme.textSecondary,
+    fontFamily: monoFontFamily,
     lineHeight: 16,
   },
   buttonContainer: {
     gap: 10,
   },
   scanButton: {
-    backgroundColor: '#4F46E5',
+    backgroundColor: theme.primary,
     padding: 15,
     borderRadius: 10,
     alignItems: 'center',
   },
   scanButtonText: {
-    color: '#FFFFFF',
+    color: theme.onPrimary,
     fontSize: 16,
     fontWeight: '600',
   },
   debugButton: {
-    backgroundColor: '#F3F4F6',
+    backgroundColor: theme.surface,
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
   },
   debugButtonText: {
-    color: '#6B7280',
+    color: theme.textSecondary,
     fontSize: 14,
   },
   retryButton: {
-    backgroundColor: '#10B981',
+    backgroundColor: theme.success,
     padding: 15,
     borderRadius: 10,
     alignItems: 'center',
   },
   retryButtonText: {
-    color: '#FFFFFF',
+    color: theme.onPrimary,
     fontSize: 16,
     fontWeight: '600',
   },
   closeButton: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: theme.border,
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
   },
   closeButtonText: {
-    color: '#374151',
+    color: theme.text,
     fontSize: 14,
     fontWeight: '500',
   },

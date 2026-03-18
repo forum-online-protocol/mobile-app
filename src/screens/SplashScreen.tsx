@@ -1,14 +1,15 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ActivityIndicator,
-  Image,
 } from 'react-native';
 import { useSelector } from 'react-redux';
 import { RootState } from '../store';
 import Logo from '../components/Logo';
+import { useTheme } from '../contexts/ThemeContext';
+import { useLocalization } from '../hooks/useLocalization';
 
 interface SplashScreenProps {
   navigation?: any;
@@ -16,12 +17,15 @@ interface SplashScreenProps {
 
 const SplashScreen: React.FC<SplashScreenProps> = ({ navigation }) => {
   const isAuthenticated = useSelector((state: RootState) => state.auth.isAuthenticated);
+  const { theme } = useTheme();
+  const { t } = useLocalization();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       if (navigation) {
         if (isAuthenticated) {
-          navigation.navigate('MainApp');
+          navigation.navigate('Feed');
         } else {
           navigation.navigate('Auth');
         }
@@ -32,7 +36,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ navigation }) => {
   }, [isAuthenticated, navigation]);
 
   return (
-    <View style={[styles.container, { backgroundColor: '#4F46E5' }]}>
+    <View style={styles.container}>
       <View style={styles.content}>
         <Logo size="large" color="white" showText={false} />
         
@@ -41,21 +45,22 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ navigation }) => {
         
         <ActivityIndicator
           size="large"
-          color="#FFFFFF"
+          color={theme.card}
           style={styles.loader}
         />
       </View>
       
-      <Text style={styles.footer}>Secure • Private • Decentralized</Text>
+      <Text style={styles.footer}>{t('splash.footer')}</Text>
     </View>
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ReturnType<typeof useTheme>['theme']) => StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: theme.primary,
   },
   content: {
     flex: 1,
@@ -74,7 +79,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 48,
     fontWeight: 'bold',
-    color: '#17559e',
+    color: theme.card,
     marginBottom: 8,
   },
   subtitle: {
@@ -89,7 +94,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 40,
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
+    color: theme.card,
+    opacity: 0.85,
   },
 });
 

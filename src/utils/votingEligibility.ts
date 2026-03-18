@@ -1,4 +1,5 @@
 import { PassportData, VoteRestrictions } from '../types';
+import i18n from '../localization/i18n';
 
 export interface EligibilityResult {
   eligible: boolean;
@@ -117,22 +118,23 @@ export function checkVotingEligibility(
  * Format Merkle-based restrictions for display
  */
 export function formatMerkleRestrictions(minAgeRange?: number, allowedCountries?: string[]): string {
+  const t = (key: string, options?: Record<string, unknown>) => String(i18n.t(key, options));
   const parts: string[] = [];
 
   // Format age range
   if (minAgeRange) {
     switch (minAgeRange) {
       case 1:
-        parts.push('Age 18+');
+        parts.push(t('restrictions.agePlus', { age: 18 }));
         break;
       case 2:
-        parts.push('Age 21+');
+        parts.push(t('restrictions.agePlus', { age: 21 }));
         break;
       case 3:
-        parts.push('Age 36+');
+        parts.push(t('restrictions.agePlus', { age: 36 }));
         break;
       default:
-        parts.push('Age restrictions apply');
+        parts.push(t('restrictions.ageRestrictionsApply'));
     }
   }
 
@@ -140,46 +142,53 @@ export function formatMerkleRestrictions(minAgeRange?: number, allowedCountries?
   if (allowedCountries) {
     if (allowedCountries.length === 0 || allowedCountries.includes('ANY')) {
       // Empty array or contains "ANY" means no country restrictions
-      parts.push('All countries eligible');
+      parts.push(t('restrictions.allCountriesEligible'));
     } else if (allowedCountries.length <= 3) {
-      parts.push(`${allowedCountries.join('/')} citizens only`);
+      parts.push(t('restrictions.citizensOnly', { countries: allowedCountries.join('/') }));
     } else {
-      parts.push(`${allowedCountries.length} countries eligible`);
+      parts.push(t('restrictions.countriesEligible', { count: allowedCountries.length }));
     }
   }
 
-  return parts.join(' • ') || 'Verification required';
+  return parts.join(' • ') || t('restrictions.verificationRequired');
 }
 
 /**
  * Format restrictions for display (legacy)
  */
 export function formatRestrictions(restrictions: VoteRestrictions): string {
+  const t = (key: string, options?: Record<string, unknown>) => String(i18n.t(key, options));
   const parts: string[] = [];
 
   if (restrictions.minAge) {
-    parts.push(`Age ${restrictions.minAge}+`);
+    parts.push(t('restrictions.agePlus', { age: restrictions.minAge }));
   }
 
   if (restrictions.maxAge) {
-    parts.push(`Under ${restrictions.maxAge}`);
+    parts.push(t('restrictions.ageUnder', { age: restrictions.maxAge }));
   }
 
   if (restrictions.allowedNationalities && restrictions.allowedNationalities.length > 0) {
     if (restrictions.allowedNationalities.length <= 3) {
-      parts.push(`${restrictions.allowedNationalities.join('/')} citizens only`);
+      parts.push(
+        t('restrictions.citizensOnly', { countries: restrictions.allowedNationalities.join('/') })
+      );
     } else {
-      parts.push(`${restrictions.allowedNationalities.length} countries eligible`);
+      parts.push(
+        t('restrictions.countriesEligible', { count: restrictions.allowedNationalities.length })
+      );
     }
   }
 
   if (restrictions.excludedNationalities && restrictions.excludedNationalities.length > 0) {
-    parts.push(`Excludes ${restrictions.excludedNationalities.join(', ')}`);
+    parts.push(
+      t('restrictions.excludes', { countries: restrictions.excludedNationalities.join(', ') })
+    );
   }
 
   if (restrictions.verificationLevel === 'passport') {
-    parts.push('Passport required');
+    parts.push(t('restrictions.passportRequired'));
   }
 
-  return parts.length > 0 ? parts.join(' • ') : 'Open to all';
+  return parts.length > 0 ? parts.join(' • ') : t('restrictions.openToAll');
 }

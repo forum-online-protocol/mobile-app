@@ -1,21 +1,25 @@
-import React, {useState, useEffect, useRef} from 'react';
+import React, {useMemo, useState, useEffect, useRef} from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Dimensions,
   StatusBar,
   Alert,
   Animated,
   ScrollView,
   Platform,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Linking,
 } from 'react-native';
 import {useDispatch} from 'react-redux';
-import {setAuthenticated, setPassportData, setWallet} from '../store/authSlice';
+import {setGuestSession, setPassportData, setWallet} from '../store/authSlice';
 import { fetchFeed } from '../store/socialSlice';
-import { WalletService } from '../services/WalletService';
 import { NFCService } from '../services/NFCService';
+import { DemoService } from '../services/DemoService';
+import AuthService from '../services/AuthService';
 import { useNavigation } from '../contexts/NavigationContext';
 import { useTranslation } from 'react-i18next';
 import Logo from '../components/Logo';
@@ -23,18 +27,21 @@ import Logo from '../components/Logo';
 import NFCStatusCheck from '../components/NFCStatusCheck';
 import LanguageSelector from '../components/LanguageSelector';
 import { isMRZScannerSupported, getMRZUnavailableReason } from '../utils/deviceDetection';
-
-const {width, height} = Dimensions.get('window');
+import { useTheme } from '../contexts/ThemeContext';
+import { hairlineWidth, radii, spacing, typography } from '../styles/tokens';
+import { openExternalUrl } from '../utils/openExternalUrl';
 
 const AuthScreen: React.FC = () => {
   const { t } = useTranslation();
   const dispatch = useDispatch();
   const navigation = useNavigation();
+  const { theme, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [isScanning, setIsScanning] = useState(false);
-  const [showMRZScanner, setShowMRZScanner] = useState(false);
   const [showNFCCheck, setShowNFCCheck] = useState(false);
+  const [showDemoModal, setShowDemoModal] = useState(false);
+  const [privateKeyInput, setPrivateKeyInput] = useState('');
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const rotateAnim = useRef(new Animated.Value(0)).current;
   const animationRef = useRef<any>(null);
   
   // Auto-login as guest on web
@@ -42,8 +49,8 @@ const AuthScreen: React.FC = () => {
     if (Platform.OS === 'web') {
       // Auto-login as guest after a brief delay
       setTimeout(async () => {
-        dispatch(setAuthenticated(true));
-        console.log('🎯 DEMO MODE: John Doe authenticated and navigating to Feed');
+        dispatch(setGuestSession());
+        console.log('[AuthScreen] Web demo mode: authenticated and navigating to Feed');
         // Refetch feed after authentication
         await dispatch(fetchFeed({} as any) as any);
         navigation.navigate('Feed');
@@ -113,18 +120,22 @@ const AuthScreen: React.FC = () => {
       }
       scaleAnim.setValue(1);
       
-      // Generate wallet from passport data
-      try {
-        const walletService = WalletService.getInstance();
-        const walletData = await walletService.generateWalletFromPassport(passportData);
-        dispatch(setWallet(walletData));
-        console.log('[AuthScreen] Wallet created:', walletData.address);
-      } catch (walletError) {
-        console.error('[AuthScreen] Failed to generate wallet:', walletError);
+      // Generate wallet + enforce on-chain registration before entering app
+      const fallbackNickname = [
+        passportData?.personalData?.firstName || passportData?.firstName || 'user',
+        passportData?.personalData?.lastName || passportData?.lastName || '',
+      ]
+        .join('_')
+        .trim();
+      const authService = AuthService.getInstance();
+      const authResult = await authService.authenticateWithPassport(passportData, fallbackNickname);
+      if (!authResult.success || !authResult.wallet) {
+        throw new Error(authResult.error || 'On-chain registration failed');
       }
+      dispatch(setWallet(authResult.wallet as any));
+      console.log('[AuthScreen] Wallet created and registered:', (authResult.wallet as any).address);
       
       setIsScanning(false);
-      dispatch(setAuthenticated(true));
       dispatch(setPassportData(passportData));
 
       // Refetch feed after authentication
@@ -225,19 +236,103 @@ const AuthScreen: React.FC = () => {
 
 
   const continueAsGuest = async () => {
-    dispatch(setAuthenticated(true));
-    // Guest user - no passport data
+    dispatch(setGuestSession());
     // Refetch feed after authentication
     await dispatch(fetchFeed({} as any) as any);
     console.log('[AuthScreen] Feed refetched after guest authentication');
     navigation.navigate('Feed');
   };
 
+  const openDemoModal = () => {
+    setShowDemoModal(true);
+    setPrivateKeyInput('');
+  };
+
+  const closeDemoModal = () => {
+    setShowDemoModal(false);
+    setPrivateKeyInput('');
+  };
+
+  const activateDemoWithNewKey = async () => {
+    try {
+      setIsScanning(true);
+      closeDemoModal();
+      console.log('[AuthScreen] Activating demo mode with new key...');
+
+      const demoService = DemoService.getInstance();
+      const { passportData, wallet } = await demoService.activateDemoModeWithNewKey();
+
+      // Update Redux store
+      dispatch(setPassportData(passportData));
+      dispatch(setWallet(wallet));
+
+      // Skip API initialization in demo mode - no API requests
+      console.log('[AuthScreen] Demo mode: Skipping API initialization (offline mode)');
+
+      // Refetch feed (will use mock data in demo mode)
+      await dispatch(fetchFeed({} as any) as any);
+      console.log('[AuthScreen] Demo mode activated successfully with new key');
+
+      setIsScanning(false);
+      navigation.navigate('Feed');
+    } catch (error) {
+      console.error('[AuthScreen] Demo mode activation failed:', error);
+      setIsScanning(false);
+      Alert.alert(
+        t('common.error'),
+        t('auth.demoModeError'),
+        [{text: t('common.ok')}]
+      );
+    }
+  };
+
+  const activateDemoWithPrivateKey = async () => {
+    if (!privateKeyInput.trim()) {
+      Alert.alert(
+        t('common.error'),
+        t('auth.enterPrivateKey'),
+        [{text: t('common.ok')}]
+      );
+      return;
+    }
+
+    try {
+      setIsScanning(true);
+      closeDemoModal();
+      console.log('[AuthScreen] Activating demo mode with private key...');
+
+      const demoService = DemoService.getInstance();
+      const { passportData, wallet } = await demoService.activateDemoModeWithPrivateKey(privateKeyInput);
+
+      // Update Redux store
+      dispatch(setPassportData(passportData));
+      dispatch(setWallet(wallet));
+
+      // Skip API initialization in demo mode - no API requests
+      console.log('[AuthScreen] Demo mode: Skipping API initialization (offline mode)');
+
+      // Refetch feed (will use mock data in demo mode)
+      await dispatch(fetchFeed({} as any) as any);
+      console.log('[AuthScreen] Demo mode activated successfully with private key');
+
+      setIsScanning(false);
+      navigation.navigate('Feed');
+    } catch (error) {
+      console.error('[AuthScreen] Demo mode activation failed:', error);
+      setIsScanning(false);
+      Alert.alert(
+        t('common.error'),
+        t('auth.invalidPrivateKey'),
+        [{text: t('common.ok')}]
+      );
+    }
+  };
+
   // Show loading for web auto-login
   if (Platform.OS === 'web') {
     return (
       <View style={[styles.container, styles.loadingBg]}>
-        <StatusBar barStyle="light-content" backgroundColor="#1D9BF0" />
+        <StatusBar barStyle="light-content" backgroundColor={theme.primary} />
         <View style={styles.loadingContainer}>
           <Logo size="large" color="white" showText={false} />
           <Text style={styles.logoTextLarge}>{t('auth.forum')}</Text>
@@ -249,7 +344,7 @@ const AuthScreen: React.FC = () => {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={theme.background} />
       
       <ScrollView 
         contentContainerStyle={styles.scrollContainer}
@@ -290,6 +385,8 @@ const AuthScreen: React.FC = () => {
           <TouchableOpacity
             onPress={startNFCScan}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={t('auth.signInWithPassportNFC')}
             style={[styles.primaryButton, !isMRZScannerSupported() && styles.buttonWithBadge]}>
             <Text style={styles.buttonText}>{t('auth.signInWithPassportNFC')}</Text>
             {!isMRZScannerSupported() && (
@@ -311,8 +408,24 @@ const AuthScreen: React.FC = () => {
           <TouchableOpacity
             onPress={continueAsGuest}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={t('auth.continueAsGuest')}
             style={styles.outlineButton}>
             <Text style={styles.outlineButtonText}>{t('auth.continueAsGuest')}</Text>
+          </TouchableOpacity>
+
+          {/* Demo Mode - For App Store reviewers and testing */}
+          <TouchableOpacity
+            onPress={openDemoModal}
+            activeOpacity={0.8}
+            disabled={isScanning}
+            accessibilityRole="button"
+            accessibilityLabel={t('auth.demoMode')}
+            style={[styles.demoButton, isScanning && styles.buttonDisabled]}>
+            <Text style={styles.demoButtonText}>
+              {isScanning ? t('common.loading') : t('auth.demoMode')}
+            </Text>
+            <Text style={styles.demoButtonSubtext}>{t('auth.demoModeDescription')}</Text>
           </TouchableOpacity>
 
           {/* Info Text */}
@@ -325,11 +438,17 @@ const AuthScreen: React.FC = () => {
           
           {/* Help Links */}
           <View style={styles.helpLinks}>
-            <TouchableOpacity>
+            <TouchableOpacity
+              onPress={() =>
+                void openExternalUrl([
+                  'https://github.com/forum-online-protocol/privacy-policy',
+                  'https://forum.online',
+                ])
+              }>
               <Text style={styles.linkText}>{t('auth.privacyPolicy')}</Text>
             </TouchableOpacity>
             <Text style={styles.linkDot}>·</Text>
-            <TouchableOpacity>
+            <TouchableOpacity onPress={() => Linking.openURL('https://forum.online')}>
               <Text style={styles.linkText}>{t('auth.learnMore')}</Text>
             </TouchableOpacity>
           </View>
@@ -345,24 +464,79 @@ const AuthScreen: React.FC = () => {
         onMRZScanned={handleMRZScanned}
       />
       */}
+
+      {/* Demo Mode Modal */}
+      <Modal
+        visible={showDemoModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={closeDemoModal}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>{t('auth.demoMode')}</Text>
+            <Text style={styles.modalDescription}>{t('auth.demoModeFullDescription')}</Text>
+
+            {/* Option 1: Generate New Key */}
+            <TouchableOpacity
+              onPress={activateDemoWithNewKey}
+              style={styles.modalOptionButton}>
+              <Text style={styles.modalOptionTitle}>{t('auth.generateNewKey')}</Text>
+              <Text style={styles.modalOptionDescription}>{t('auth.generateNewKeyDescription')}</Text>
+            </TouchableOpacity>
+
+            {/* Option 2: Use Private Key */}
+            <View style={styles.modalDivider}>
+              <View style={styles.modalDividerLine} />
+              <Text style={styles.modalDividerText}>{t('auth.or')}</Text>
+              <View style={styles.modalDividerLine} />
+            </View>
+
+            <Text style={styles.inputLabel}>{t('auth.usePrivateKey')}</Text>
+            <TextInput
+              style={styles.privateKeyInput}
+              placeholder={t('auth.privateKeyPlaceholder')}
+                placeholderTextColor={theme.placeholder}
+              value={privateKeyInput}
+              onChangeText={setPrivateKeyInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry={false}
+              multiline={false}
+            />
+            <TouchableOpacity
+              onPress={activateDemoWithPrivateKey}
+              disabled={!privateKeyInput.trim()}
+              style={[styles.modalSubmitButton, !privateKeyInput.trim() && styles.buttonDisabled]}>
+              <Text style={styles.modalSubmitButtonText}>{t('auth.useThisKey')}</Text>
+            </TouchableOpacity>
+
+            {/* Cancel Button */}
+            <TouchableOpacity onPress={closeDemoModal} style={styles.modalCancelButton}>
+              <Text style={styles.modalCancelButtonText}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ReturnType<typeof useTheme>['theme']) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.background,
   },
   languageSelectorContainer: {
     position: 'absolute',
     top: Platform.OS === 'ios' ? 60 : 40,
-    right: 20,
+    right: spacing.xl,
     zIndex: 1000,
   },
   scrollContainer: {
     flexGrow: 1,
-    paddingHorizontal: Platform.OS === 'web' ? '10%' : 32,
+    paddingHorizontal: Platform.OS === 'web' ? '10%' : spacing.xxxl,
     paddingTop: 80,
     paddingBottom: 30,
     maxWidth: Platform.OS === 'web' ? 400 : '100%',
@@ -373,7 +547,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.background,
   },
   logoSection: {
     alignItems: 'center',
@@ -382,33 +556,31 @@ const styles = StyleSheet.create({
   logoText: {
     fontSize: 40,
     fontWeight: '800',
-    color: '#000000',
-    marginBottom: 12,
-    marginTop: 12,
+    color: theme.text,
+    marginBottom: spacing.m,
+    marginTop: spacing.m,
   },
   logoTextLarge: {
     fontSize: 60,
     fontWeight: '800',
-    color: '#17559e',
-    marginBottom: 20,
-    marginTop: 20,
+    color: theme.primaryDark,
+    marginBottom: spacing.xl,
+    marginTop: spacing.xl,
   },
   loadingText: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    fontWeight: '400',
+    ...typography.body,
+    color: theme.onPrimary,
     opacity: 0.9,
   },
   loadingBg: {
-    backgroundColor: '#1D9BF0',
+    backgroundColor: theme.primary,
   },
   logoWrapper: {
-    marginBottom: 20,
+    marginBottom: spacing.xl,
   },
   tagline: {
-    fontSize: 15,
-    color: '#536471',
-    fontWeight: '400',
+    ...typography.body,
+    color: theme.textSecondary,
     letterSpacing: 0.3,
   },
   authSection: {
@@ -417,105 +589,99 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 31,
     fontWeight: '700',
-    color: '#17559e',
-    marginBottom: 32,
+    color: theme.primaryDark,
+    marginBottom: spacing.xxxl,
     letterSpacing: -0.5,
   },
   primaryButton: {
-    backgroundColor: '#000000',
+    backgroundColor: theme.primary,
     paddingVertical: 15,
-    paddingHorizontal: 32,
-    borderRadius: 9999,
+    paddingHorizontal: spacing.xxxl,
+    borderRadius: radii.pill,
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: spacing.m,
   },
   buttonDisabled: {
     opacity: 0.5,
   },
   buttonText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#FFFFFF',
+    ...typography.bodyStrong,
+    color: theme.onPrimary,
   },
   secondaryButton: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.card,
     paddingVertical: 15,
-    paddingHorizontal: 32,
-    borderRadius: 9999,
+    paddingHorizontal: spacing.xxxl,
+    borderRadius: radii.pill,
     alignItems: 'center',
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#CFD9DE',
+    marginBottom: spacing.m,
+    borderWidth: hairlineWidth,
+    borderColor: theme.border,
   },
   secondaryButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#0F1419',
+    ...typography.bodyStrong,
+    color: theme.text,
   },
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 20,
+    marginVertical: spacing.xl,
   },
   dividerLine: {
     flex: 1,
-    height: 1,
-    backgroundColor: '#EFF3F4',
+    height: hairlineWidth,
+    backgroundColor: theme.border,
   },
   dividerText: {
-    marginHorizontal: 16,
-    color: '#536471',
-    fontSize: 15,
-    fontWeight: '400',
+    marginHorizontal: spacing.l,
+    ...typography.body,
+    color: theme.textSecondary,
   },
   outlineButton: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.card,
     paddingVertical: 15,
-    paddingHorizontal: 32,
-    borderRadius: 9999,
+    paddingHorizontal: spacing.xxxl,
+    borderRadius: radii.pill,
     alignItems: 'center',
-    marginBottom: 32,
-    borderWidth: 1,
-    borderColor: '#CFD9DE',
+    marginBottom: spacing.xxxl,
+    borderWidth: hairlineWidth,
+    borderColor: theme.border,
   },
   outlineButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1D9BF0',
+    ...typography.bodyStrong,
+    color: theme.primary,
   },
   infoContainer: {
-    backgroundColor: '#F7F9FA',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: '#EFF3F4',
+    backgroundColor: theme.surface,
+    borderRadius: radii.m,
+    padding: spacing.l,
+    marginBottom: spacing.xxl,
+    borderWidth: hairlineWidth,
+    borderColor: theme.border,
   },
   infoTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#0F1419',
-    marginBottom: 8,
+    ...typography.bodyStrong,
+    color: theme.text,
+    marginBottom: spacing.s,
   },
   infoText: {
-    fontSize: 14,
-    color: '#536471',
+    ...typography.caption,
+    color: theme.textSecondary,
     lineHeight: 20,
   },
   helpLinks: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: spacing.xl,
   },
   linkText: {
-    fontSize: 15,
-    color: '#1D9BF0',
-    fontWeight: '400',
+    ...typography.body,
+    color: theme.primary,
   },
   linkDot: {
-    marginHorizontal: 12,
-    color: '#536471',
+    marginHorizontal: spacing.m,
+    color: theme.textSecondary,
     fontSize: 15,
   },
   buttonWithBadge: {
@@ -526,21 +692,141 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -10,
     right: -10,
-    backgroundColor: '#FFA500',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
+    backgroundColor: theme.warning,
+    paddingHorizontal: spacing.s,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.m,
     elevation: 3,
-    shadowColor: '#000',
+    shadowColor: theme.text,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
   comingSoonText: {
-    color: '#FFFFFF',
+    color: theme.onPrimary,
     fontSize: 10,
     fontWeight: '700',
     textTransform: 'uppercase',
+  },
+  demoButton: {
+    backgroundColor: 'rgba(29, 155, 240, 0.1)',
+    paddingVertical: spacing.l,
+    paddingHorizontal: spacing.xxxl,
+    borderRadius: radii.m,
+    alignItems: 'center',
+    marginBottom: spacing.xxl,
+    borderWidth: 2,
+    borderColor: theme.primary,
+    borderStyle: 'dashed',
+  },
+  demoButtonText: {
+    ...typography.bodyStrong,
+    color: theme.primary,
+    marginBottom: spacing.xs,
+  },
+  demoButtonSubtext: {
+    ...typography.small,
+    color: theme.textSecondary,
+    textAlign: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: theme.overlay,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl,
+  },
+  modalContent: {
+    backgroundColor: theme.modalBackground,
+    borderRadius: radii.l,
+    padding: spacing.xxl,
+    width: '100%',
+    maxWidth: 400,
+    borderWidth: hairlineWidth,
+    borderColor: theme.border,
+  },
+  modalTitle: {
+    ...typography.headline,
+    color: theme.text,
+    textAlign: 'center',
+    marginBottom: spacing.s,
+  },
+  modalDescription: {
+    ...typography.caption,
+    color: theme.textSecondary,
+    textAlign: 'center',
+    marginBottom: spacing.xxl,
+    lineHeight: 20,
+  },
+  modalOptionButton: {
+    backgroundColor: theme.primary,
+    paddingVertical: spacing.l,
+    paddingHorizontal: spacing.xl,
+    borderRadius: radii.m,
+    alignItems: 'center',
+    marginBottom: spacing.l,
+  },
+  modalOptionTitle: {
+    ...typography.bodyStrong,
+    color: theme.onPrimary,
+    marginBottom: spacing.xs,
+  },
+  modalOptionDescription: {
+    ...typography.small,
+    color: 'rgba(255, 255, 255, 0.8)',
+    textAlign: 'center',
+  },
+  modalDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: spacing.l,
+  },
+  modalDividerLine: {
+    flex: 1,
+    height: hairlineWidth,
+    backgroundColor: theme.border,
+  },
+  modalDividerText: {
+    marginHorizontal: spacing.l,
+    ...typography.caption,
+    color: theme.textSecondary,
+  },
+  inputLabel: {
+    ...typography.caption,
+    fontWeight: '600',
+    color: theme.text,
+    marginBottom: spacing.s,
+  },
+  privateKeyInput: {
+    backgroundColor: theme.inputBackground,
+    borderWidth: hairlineWidth,
+    borderColor: theme.inputBorder,
+    borderRadius: radii.s,
+    paddingHorizontal: spacing.l,
+    paddingVertical: spacing.m,
+    ...typography.caption,
+    color: theme.inputText,
+    marginBottom: spacing.m,
+  },
+  modalSubmitButton: {
+    backgroundColor: theme.primary,
+    paddingVertical: spacing.m,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+    marginBottom: spacing.m,
+  },
+  modalSubmitButtonText: {
+    ...typography.bodyStrong,
+    color: theme.onPrimary,
+  },
+  modalCancelButton: {
+    paddingVertical: spacing.m,
+    alignItems: 'center',
+  },
+  modalCancelButtonText: {
+    ...typography.body,
+    fontWeight: '600',
+    color: theme.textSecondary,
   },
 });
 

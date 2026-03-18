@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,9 @@ import {
 } from 'react-native';
 // import LinearGradient from 'react-native-linear-gradient';
 import Icon from '../components/Icon';
+import { useNavigation } from '../contexts/NavigationContext';
+import { useTheme } from '../contexts/ThemeContext';
+import { useLocalization } from '../hooks/useLocalization';
 
 const { width } = Dimensions.get('window');
 
@@ -20,41 +23,47 @@ interface OnboardingSlide {
   color: [string, string];
 }
 
-const slides: OnboardingSlide[] = [
-  {
-    icon: 'card' as const,
-    title: 'Passport Authentication',
-    description: 'Use your government-issued passport as your secure wallet key. No seed phrases to remember.',
-    color: ['#4F46E5', '#7C3AED'],
-  },
-  {
-    icon: 'wallet' as const,
-    title: 'Built-in Ethereum Wallet',
-    description: 'Send, receive, and manage your crypto assets with a wallet generated from your passport.',
-    color: ['#7C3AED', '#EC4899'],
-  },
-  {
-    icon: 'chatbubble' as const,
-    title: 'Social Democracy Platform',
-    description: 'Join verified discussions, create polls, and vote on proposals with guaranteed one-person-one-vote.',
-    color: ['#EC4899', '#F59E0B'],
-  },
-  {
-    icon: 'shield' as const,
-    title: 'Privacy First',
-    description: 'Your passport data never leaves your device. We use zero-knowledge proofs for verification.',
-    color: ['#F59E0B', '#10B981'],
-  },
-];
-
 const OnboardingScreen: React.FC = () => {
+  const navigation = useNavigation();
+  const { theme } = useTheme();
+  const { t } = useLocalization();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [currentSlide, setCurrentSlide] = useState(0);
+  const slides: OnboardingSlide[] = useMemo(
+    () => [
+      {
+        icon: 'card',
+        title: t('onboarding.slides.passportAuth.title'),
+        description: t('onboarding.slides.passportAuth.description'),
+        color: [theme.primaryDark, theme.primary],
+      },
+      {
+        icon: 'wallet',
+        title: t('onboarding.slides.wallet.title'),
+        description: t('onboarding.slides.wallet.description'),
+        color: [theme.primary, theme.info],
+      },
+      {
+        icon: 'chatbubble',
+        title: t('onboarding.slides.social.title'),
+        description: t('onboarding.slides.social.description'),
+        color: [theme.info, theme.warning],
+      },
+      {
+        icon: 'shield',
+        title: t('onboarding.slides.privacy.title'),
+        description: t('onboarding.slides.privacy.description'),
+        color: [theme.warning, theme.success],
+      },
+    ],
+    [theme, t],
+  );
 
   const handleNext = () => {
     if (currentSlide < slides.length - 1) {
       setCurrentSlide(currentSlide + 1);
     } else {
-      console.log('Navigate to: PassportScan');
+      navigation.navigate('PassportScan' as never);
     }
   };
 
@@ -64,9 +73,9 @@ const OnboardingScreen: React.FC = () => {
 
   const renderSlide = (slide: OnboardingSlide, index: number) => {
     return (
-      <View key={index} style={[styles.slide, { width }]}>
-        <View style={[styles.iconContainer, { backgroundColor: slide.color[0] }]}>
-          <Icon name={slide.icon} variant="filled" size={80} color="#FFFFFF" />
+        <View key={index} style={[styles.slide, { width }]}>
+          <View style={[styles.iconContainer, { backgroundColor: slide.color[0] }]}>
+          <Icon name={slide.icon} variant="filled" size={80} color={theme.onPrimary} />
         </View>
         
         <Text style={styles.slideTitle}>{slide.title}</Text>
@@ -94,8 +103,12 @@ const OnboardingScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={handleSkip}>
-          <Text style={styles.skipText}>Skip</Text>
+        <TouchableOpacity
+          onPress={handleSkip}
+          accessibilityRole="button"
+          accessibilityLabel={t('onboarding.skipA11y')}
+        >
+          <Text style={styles.skipText}>{t('onboarding.skip')}</Text>
         </TouchableOpacity>
       </View>
 
@@ -118,14 +131,16 @@ const OnboardingScreen: React.FC = () => {
         <TouchableOpacity
           style={styles.nextButton}
           onPress={handleNext}
+          accessibilityRole="button"
+          accessibilityLabel={currentSlide === slides.length - 1 ? t('onboarding.finishA11y') : t('onboarding.nextSlideA11y')}
         >
           <View 
             style={[styles.nextButtonGradient, { backgroundColor: slides[currentSlide].color[0] }]}
           >
             <Text style={styles.nextButtonText}>
-              {currentSlide === slides.length - 1 ? 'Get Started' : 'Next'}
+              {currentSlide === slides.length - 1 ? t('onboarding.getStarted') : t('onboarding.next')}
             </Text>
-            <Icon name="arrow-forward" size={20} color="#FFFFFF" variant="filled" />
+            <Icon name="arrow-forward" size={20} color={theme.onPrimary} variant="filled" />
           </View>
         </TouchableOpacity>
       </View>
@@ -133,17 +148,17 @@ const OnboardingScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ReturnType<typeof useTheme>['theme']) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.background,
   },
   header: {
     padding: 20,
     alignItems: 'flex-end',
   },
   skipText: {
-    color: '#6B7280',
+    color: theme.textSecondary,
     fontSize: 16,
   },
   slide: {
@@ -160,7 +175,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 40,
     elevation: 8,
-    shadowColor: '#000',
+    shadowColor: theme.text,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.15,
     shadowRadius: 12,
@@ -168,13 +183,13 @@ const styles = StyleSheet.create({
   slideTitle: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: '#1F2937',
+    color: theme.text,
     marginBottom: 16,
     textAlign: 'center',
   },
   slideDescription: {
     fontSize: 16,
-    color: '#6B7280',
+    color: theme.textSecondary,
     textAlign: 'center',
     lineHeight: 24,
   },
@@ -187,12 +202,12 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#D1D5DB',
+    backgroundColor: theme.border,
     marginHorizontal: 4,
   },
   paginationDotActive: {
     width: 24,
-    backgroundColor: '#4F46E5',
+    backgroundColor: theme.primary,
   },
   footer: {
     paddingHorizontal: 20,
@@ -209,7 +224,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   nextButtonText: {
-    color: '#FFFFFF',
+    color: theme.onPrimary,
     fontSize: 18,
     fontWeight: '600',
     marginRight: 8,

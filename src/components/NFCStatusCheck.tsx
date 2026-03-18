@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { NFCService } from '../services/NFCService';
+import { useTheme } from '../contexts/ThemeContext';
+import { useLocalization } from '../hooks/useLocalization';
 
 interface NFCStatusCheckProps {
   onNFCEnabled: () => void;
@@ -15,6 +17,9 @@ interface NFCStatusCheckProps {
 }
 
 const NFCStatusCheck: React.FC<NFCStatusCheckProps> = ({ onNFCEnabled, onSkip }) => {
+  const { theme } = useTheme();
+  const { t } = useLocalization();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [isChecking, setIsChecking] = useState(true);
   const [isNFCEnabled, setIsNFCEnabled] = useState(false);
   const [hasChecked, setHasChecked] = useState(false);
@@ -72,8 +77,8 @@ const NFCStatusCheck: React.FC<NFCStatusCheckProps> = ({ onNFCEnabled, onSkip })
   if (isChecking && !hasChecked) {
     return (
       <View style={styles.container}>
-        <ActivityIndicator size="large" color="#1D9BF0" />
-        <Text style={styles.checkingText}>Checking NFC status...</Text>
+        <ActivityIndicator size="large" color={theme.primary} />
+        <Text style={styles.checkingText}>{t('nfcStatus.checking')}</Text>
       </View>
     );
   }
@@ -83,16 +88,16 @@ const NFCStatusCheck: React.FC<NFCStatusCheckProps> = ({ onNFCEnabled, onSkip })
       <View style={styles.container}>
         <View style={styles.warningBox}>
           <Text style={styles.warningIcon}>⚠️</Text>
-          <Text style={styles.warningTitle}>NFC is Disabled</Text>
+          <Text style={styles.warningTitle}>{t('nfcStatus.disabledTitle')}</Text>
           <Text style={styles.warningText}>
-            NFC is required to read your passport chip. Please enable it to continue.
+            {t('nfcStatus.disabledDescription')}
           </Text>
           
           <TouchableOpacity
             style={styles.enableButton}
             onPress={handleEnableNFC}>
             <Text style={styles.enableButtonText}>
-              {Platform.OS === 'android' ? 'Open NFC Settings' : 'Open Settings'}
+              {Platform.OS === 'android' ? t('nfcStatus.openNfcSettings') : t('nfcStatus.openSettings')}
             </Text>
           </TouchableOpacity>
           
@@ -100,7 +105,7 @@ const NFCStatusCheck: React.FC<NFCStatusCheckProps> = ({ onNFCEnabled, onSkip })
             <TouchableOpacity
               style={styles.skipButton}
               onPress={onSkip}>
-              <Text style={styles.skipButtonText}>Skip for now</Text>
+              <Text style={styles.skipButtonText}>{t('nfcStatus.skipForNow')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -111,7 +116,7 @@ const NFCStatusCheck: React.FC<NFCStatusCheckProps> = ({ onNFCEnabled, onSkip })
   return null;
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ReturnType<typeof useTheme>['theme']) => StyleSheet.create({
   container: {
     padding: 20,
     alignItems: 'center',
@@ -119,14 +124,14 @@ const styles = StyleSheet.create({
   checkingText: {
     marginTop: 10,
     fontSize: 14,
-    color: '#536471',
+    color: theme.textSecondary,
   },
   warningBox: {
-    backgroundColor: '#FFF7E6',
+    backgroundColor: theme.surface,
     borderRadius: 12,
     padding: 20,
     borderWidth: 1,
-    borderColor: '#FFD666',
+    borderColor: theme.warning,
     alignItems: 'center',
     width: '100%',
     maxWidth: 400,
@@ -138,25 +143,25 @@ const styles = StyleSheet.create({
   warningTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 8,
   },
   warningText: {
     fontSize: 14,
-    color: '#536471',
+    color: theme.textSecondary,
     textAlign: 'center',
     lineHeight: 20,
     marginBottom: 20,
   },
   enableButton: {
-    backgroundColor: '#1D9BF0',
+    backgroundColor: theme.primary,
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 9999,
     marginBottom: 10,
   },
   enableButtonText: {
-    color: '#FFFFFF',
+    color: theme.onPrimary,
     fontSize: 15,
     fontWeight: '600',
   },
@@ -164,7 +169,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   skipButtonText: {
-    color: '#536471',
+    color: theme.textSecondary,
     fontSize: 14,
   },
 });

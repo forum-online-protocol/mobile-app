@@ -1,6 +1,9 @@
 import {Post} from '../types/Post';
 
-const API_BASE_URL = 'https://forum-api-production-42de.up.railway.app';
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL ||
+  process.env.REACT_APP_API_URL ||
+  'https://dev-api.votta.vote';
 
 export const fetchPosts = async (): Promise<Post[]> => {
   try {

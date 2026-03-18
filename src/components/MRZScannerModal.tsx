@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,12 @@ import {
   TouchableOpacity,
   Platform,
   Alert,
-  Dimensions,
 } from 'react-native';
 // Using PermissionsAndroid from react-native instead of react-native-permissions
 import { PermissionsAndroid } from 'react-native';
+import { useTheme } from '../contexts/ThemeContext';
+import { monoFontFamily } from '../styles/tokens';
+import { useTranslation } from 'react-i18next';
 
 // Conditional import to avoid errors on web
 let MrzReader: any = null;
@@ -40,13 +42,14 @@ interface MRZScannerModalProps {
   }) => void;
 }
 
-const { width, height } = Dimensions.get('window');
-
 const MRZScannerModal: React.FC<MRZScannerModalProps> = ({ 
   visible, 
   onClose, 
   onMRZScanned 
 }) => {
+  const { theme } = useTheme();
+  const { t } = useTranslation();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [hasPermission, setHasPermission] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
 
@@ -66,11 +69,11 @@ const MRZScannerModal: React.FC<MRZScannerModalProps> = ({
         const granted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.CAMERA,
           {
-            title: 'Camera Permission',
-            message: 'This app needs access to your camera to scan passport MRZ.',
-            buttonNeutral: 'Ask Me Later',
-            buttonNegative: 'Cancel',
-            buttonPositive: 'OK',
+            title: t('passport.cameraPermissionTitle'),
+            message: t('passport.cameraPermissionMessage'),
+            buttonNeutral: t('mrzScanner.askMeLater'),
+            buttonNegative: t('common.cancel'),
+            buttonPositive: t('common.ok'),
           }
         );
         
@@ -80,12 +83,12 @@ const MRZScannerModal: React.FC<MRZScannerModalProps> = ({
         } else {
           setHasPermission(false);
           Alert.alert(
-            'Camera Permission Required',
-            'Please enable camera access in settings to scan passport MRZ.',
+            t('passport.permissionDenied'),
+            t('mrzScanner.enableCameraInSettings'),
             [
-              { text: 'Cancel', onPress: onClose },
+              { text: t('common.cancel'), onPress: onClose },
               { 
-                text: 'Open Settings', 
+                text: t('nfcStatus.openSettings'), 
                 onPress: () => {
                   // Use Linking to open settings
                   const { Linking } = require('react-native');
@@ -159,11 +162,11 @@ const MRZScannerModal: React.FC<MRZScannerModalProps> = ({
       if (Platform.OS === 'android' && 
           (!parsedData.dateOfBirth || !parsedData.dateOfExpiry)) {
         Alert.alert(
-          'Partial MRZ Data',
-          'Document number was scanned. Please enter birth and expiry dates manually.',
+          t('mrzScanner.partialMrzDataTitle'),
+          t('mrzScanner.partialMrzDataMessage'),
           [
             {
-              text: 'Continue',
+              text: t('common.continue'),
               onPress: () => onMRZScanned(parsedData)
             }
           ]
@@ -190,7 +193,7 @@ const MRZScannerModal: React.FC<MRZScannerModalProps> = ({
           <TouchableOpacity onPress={onClose} style={styles.closeButton}>
             <Text style={styles.closeButtonText}>✕</Text>
           </TouchableOpacity>
-          <Text style={styles.title}>Scan Passport MRZ</Text>
+          <Text style={styles.title}>{t('passport.scanMrz')}</Text>
         </View>
         
         <View style={styles.cameraContainer}>
@@ -204,17 +207,16 @@ const MRZScannerModal: React.FC<MRZScannerModalProps> = ({
           ) : (
             <View style={styles.noPermission}>
               <Text style={styles.noPermissionText}>
-                Camera permission not granted
+                {t('mrzScanner.cameraPermissionNotGranted')}
               </Text>
             </View>
           )}
         </View>
         
         <View style={styles.instructions}>
-          <Text style={styles.instructionTitle}>Position the MRZ in the frame</Text>
+          <Text style={styles.instructionTitle}>{t('mrzScanner.positionMrzInFrame')}</Text>
           <Text style={styles.instructionText}>
-            The MRZ is the two lines of text at the bottom of your passport's photo page.
-            Keep your passport steady and well-lit.
+            {t('mrzScanner.positionMrzDescription')}
           </Text>
           
           <View style={styles.mrzExample}>
@@ -227,13 +229,13 @@ const MRZScannerModal: React.FC<MRZScannerModalProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ReturnType<typeof useTheme>['theme']) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: theme.background,
   },
   header: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: theme.headerBackground,
     paddingTop: Platform.OS === 'ios' ? 50 : 20,
     paddingBottom: 20,
     paddingHorizontal: 20,
@@ -247,13 +249,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   closeButtonText: {
-    color: '#FFFFFF',
+    color: theme.text,
     fontSize: 24,
     fontWeight: '300',
   },
   title: {
     flex: 1,
-    color: '#FFFFFF',
+    color: theme.text,
     fontSize: 18,
     fontWeight: '600',
     textAlign: 'center',
@@ -261,7 +263,7 @@ const styles = StyleSheet.create({
   },
   cameraContainer: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: theme.background,
   },
   camera: {
     width: '100%',
@@ -273,38 +275,38 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   noPermissionText: {
-    color: '#FFFFFF',
+    color: theme.text,
     fontSize: 16,
   },
   instructions: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: theme.headerBackground,
     padding: 20,
     paddingBottom: Platform.OS === 'ios' ? 40 : 20,
   },
   instructionTitle: {
-    color: '#FFFFFF',
+    color: theme.text,
     fontSize: 16,
     fontWeight: '600',
     marginBottom: 8,
     textAlign: 'center',
   },
   instructionText: {
-    color: '#AAAAAA',
+    color: theme.textSecondary,
     fontSize: 14,
     textAlign: 'center',
     lineHeight: 20,
     marginBottom: 16,
   },
   mrzExample: {
-    backgroundColor: '#2a2a2a',
+    backgroundColor: theme.surface,
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
   },
   mrzExampleText: {
-    color: '#00FF00',
+    color: theme.success,
     fontSize: 11,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontFamily: monoFontFamily,
     letterSpacing: 1,
   },
 });

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,9 @@ import {
 } from 'react-native';
 import { useSelector } from 'react-redux';
 import Icon from './Icon';
+import { useTheme } from '../contexts/ThemeContext';
+import { ROUTES } from '../navigation/routes';
+import { useLocalization } from '../hooks/useLocalization';
 
 interface SidebarProps {
   navigation?: any;
@@ -16,132 +19,81 @@ interface SidebarProps {
 
 interface RootState {
   auth: {
-    isAuthenticated: boolean;
-    passportData: any;
+    sessionType: 'guest' | 'signed' | 'verified';
   };
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ navigation, currentScreen = 'Feed' }) => {
-  const passportData = useSelector((state: RootState) => state.auth.passportData);
-  const isGuest = !passportData;
+const Sidebar: React.FC<SidebarProps> = ({ navigation, currentScreen = ROUTES.FEED }) => {
+  const { theme } = useTheme();
+  const { t } = useLocalization();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const sessionType = useSelector((state: RootState) => state.auth.sessionType);
+  const isGuest = sessionType === 'guest';
 
   const menuItems = [
-    { id: 'Feed', label: 'Home', iconName: 'home' as const, path: 'Feed' },
-    { id: 'Explore', label: 'Explore', iconName: 'search' as const, path: 'Explore' },
-    { id: 'Proposals', label: 'Active Proposals', iconName: 'document' as const, path: 'Proposals' },
-    { type: 'divider' },
-    { id: 'Wallet', label: 'Wallet', iconName: 'wallet' as const, path: 'Wallet', requiresAuth: true },
-    { id: 'Profile', label: 'Profile', iconName: 'person' as const, path: 'Profile', requiresAuth: true },
-    { id: 'Settings', label: 'Settings', iconName: 'settings' as const, path: 'Settings', requiresAuth: true },
+    { id: ROUTES.FEED, labelKey: 'navigation.home', iconName: 'home' as const, path: ROUTES.FEED },
+    { id: ROUTES.WALLET, labelKey: 'navigation.wallet', iconName: 'wallet' as const, path: ROUTES.WALLET, requiresAuth: true },
+    { id: ROUTES.PROFILE, labelKey: 'navigation.profile', iconName: 'person' as const, path: ROUTES.PROFILE, requiresAuth: true },
+    { id: ROUTES.SETTINGS, labelKey: 'profile.settings', iconName: 'settings' as const, path: ROUTES.SETTINGS },
   ];
 
-  const stats = {
-    activeProposals: 12,
-    totalVoters: '45.2K',
-    participation: '67%',
-  };
-
   if (Platform.OS !== 'web') {
-    return null; // Sidebar only for web
+    return null;
   }
 
   return (
     <View style={styles.sidebar}>
-      {/* Logo Section */}
       <View style={styles.logoSection}>
-        <Icon name="ballot" variant="filled" size={32} color="#000000" />
-        <Text style={styles.logoText}>Forum</Text>
+        <Icon name="ballot" variant="filled" size={32} color={theme.text} />
+        <Text style={styles.logoText}>{t('auth.forum')}</Text>
       </View>
-      
-      {/* Navigation Items */}
+
       <View style={styles.navSection}>
-        {menuItems.map((item, index) => {
-          if (item.type === 'divider') {
-            return <View key={`divider-${index}`} style={styles.divider} />;
-          }
-          
+        {menuItems.map((item) => {
           if (item.requiresAuth && isGuest) return null;
-          
+
           const isActive = currentScreen === item.id;
-          
+
           return (
             <TouchableOpacity
               key={item.id}
               style={[styles.navItem, isActive && styles.navItemActive]}
               onPress={() => navigation?.navigate(item.path)}
             >
-              <Icon 
+              <Icon
                 name={item.iconName}
-                size={20} 
-                color={isActive ? '#0F1419' : '#536471'}
+                size={20}
+                color={isActive ? theme.text : theme.textSecondary}
                 variant={isActive ? 'filled' : 'outline'}
               />
-              <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>
-                {item.label}
-              </Text>
-              {item.id === 'Proposals' && (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{stats.activeProposals}</Text>
-                </View>
-              )}
+              <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>{t(item.labelKey)}</Text>
             </TouchableOpacity>
           );
         })}
       </View>
 
-      {/* Stats Section */}
-      <View style={styles.statsSection}>
-        <Text style={styles.statsTitle}>Platform Stats</Text>
-        <View style={styles.statItem}>
-          <Text style={styles.statLabel}>Active Voters</Text>
-          <Text style={styles.statValue}>{stats.totalVoters}</Text>
-        </View>
-        <View style={styles.statItem}>
-          <Text style={styles.statLabel}>Participation</Text>
-          <Text style={styles.statValue}>{stats.participation}</Text>
-        </View>
-      </View>
-
-      {/* Guest Prompt */}
       {isGuest && (
         <View style={styles.guestPrompt}>
-          <Text style={styles.guestTitle}>Join Forum</Text>
-          <Text style={styles.guestText}>
-            Verify with your passport to participate in governance
-          </Text>
-          <TouchableOpacity 
+          <Text style={styles.guestTitle}>{t('sidebar.joinForum')}</Text>
+          <Text style={styles.guestText}>{t('sidebar.verifyPassportPrompt')}</Text>
+          <TouchableOpacity
             style={styles.verifyButton}
-            onPress={() => navigation?.navigate('Auth')}
+            onPress={() => navigation?.navigate(ROUTES.AUTH)}
           >
-            <Text style={styles.verifyButtonText}>Get Verified</Text>
+            <Text style={styles.verifyButtonText}>{t('sidebar.getVerified')}</Text>
           </TouchableOpacity>
         </View>
       )}
-
-      {/* Footer */}
-      <View style={styles.footer}>
-        <TouchableOpacity style={styles.footerLink}>
-          <Text style={styles.footerText}>About</Text>
-        </TouchableOpacity>
-        <Text style={styles.footerDot}>·</Text>
-        <TouchableOpacity style={styles.footerLink}>
-          <Text style={styles.footerText}>Help</Text>
-        </TouchableOpacity>
-        <Text style={styles.footerDot}>·</Text>
-        <TouchableOpacity style={styles.footerLink}>
-          <Text style={styles.footerText}>Terms</Text>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ReturnType<typeof useTheme>['theme']) => StyleSheet.create({
   sidebar: {
     width: 280,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.card,
     borderRightWidth: 1,
-    borderRightColor: '#EFF3F4',
+    borderRightColor: theme.border,
     height: '100%',
     paddingTop: 20,
     paddingHorizontal: 12,
@@ -153,12 +105,12 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     marginBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#EFF3F4',
+    borderBottomColor: theme.border,
   },
   logoText: {
     fontSize: 24,
     fontWeight: '800',
-    color: '#17559e',
+    color: theme.text,
     marginLeft: 12,
   },
   navSection: {
@@ -173,115 +125,49 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   navItemActive: {
-    backgroundColor: '#F7F9FA',
-  },
-  navIcon: {
-    fontSize: 20,
-    marginRight: 16,
-    width: 24,
+    backgroundColor: theme.surface,
   },
   navLabel: {
     fontSize: 15,
-    color: '#536471',
+    color: theme.textSecondary,
     fontWeight: '500',
     flex: 1,
+    marginLeft: 12,
   },
   navLabelActive: {
-    color: '#0F1419',
+    color: theme.text,
     fontWeight: '700',
-  },
-  badge: {
-    backgroundColor: '#1D9BF0',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 9999,
-    minWidth: 24,
-    alignItems: 'center',
-  },
-  badgeText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#EFF3F4',
-    marginVertical: 12,
-  },
-  statsSection: {
-    backgroundColor: '#F7F9FA',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 20,
-  },
-  statsTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#0F1419',
-    marginBottom: 12,
-  },
-  statItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  statLabel: {
-    fontSize: 14,
-    color: '#536471',
-  },
-  statValue: {
-    fontSize: 14,
-    color: '#0F1419',
-    fontWeight: '600',
   },
   guestPrompt: {
-    backgroundColor: '#E8F5FD',
+    backgroundColor: theme.surface,
     borderRadius: 16,
     padding: 16,
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: '#1D9BF0',
+    borderColor: theme.primary,
   },
   guestTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#17559e',
+    color: theme.primary,
     marginBottom: 8,
   },
   guestText: {
     fontSize: 14,
-    color: '#536471',
+    color: theme.textSecondary,
     marginBottom: 12,
     lineHeight: 20,
   },
   verifyButton: {
-    backgroundColor: '#1D9BF0',
+    backgroundColor: theme.primary,
     paddingVertical: 10,
     borderRadius: 9999,
     alignItems: 'center',
   },
   verifyButtonText: {
-    color: '#FFFFFF',
+    color: theme.onPrimary,
     fontSize: 15,
     fontWeight: '700',
-  },
-  footer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    marginTop: 'auto',
-  },
-  footerLink: {
-    padding: 4,
-  },
-  footerText: {
-    fontSize: 13,
-    color: '#536471',
-  },
-  footerDot: {
-    marginHorizontal: 8,
-    color: '#536471',
-    fontSize: 13,
   },
 });
 

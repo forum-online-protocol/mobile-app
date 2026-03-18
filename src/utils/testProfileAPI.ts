@@ -5,7 +5,7 @@ export const testProfileEndpoints = async () => {
   
   console.log('🧪 Testing Profile API endpoints...');
   
-  // Test address (John Doe demo address)
+  // Test address (demo address)
   const testAddress = '0x742d35Cc6338C0532c741201da69a85B2d2eF7DF';
   
   try {

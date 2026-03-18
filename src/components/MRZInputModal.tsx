@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -6,9 +6,10 @@ import {
   StyleSheet,
   Modal,
   TouchableOpacity,
-  Platform,
   Alert,
 } from 'react-native';
+import { useTheme } from '../contexts/ThemeContext';
+import { useTranslation } from 'react-i18next';
 
 interface MRZInputModalProps {
   visible: boolean;
@@ -22,6 +23,9 @@ interface MRZInputModalProps {
 }
 
 const MRZInputModal: React.FC<MRZInputModalProps> = ({ visible, onClose, onSubmit, initialData }) => {
+  const { theme } = useTheme();
+  const { t } = useTranslation();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [documentNumber, setDocumentNumber] = useState(initialData?.documentNumber || '');
   const [dateOfBirth, setDateOfBirth] = useState(initialData?.dateOfBirth || '');
   const [dateOfExpiry, setDateOfExpiry] = useState(initialData?.dateOfExpiry || '');
@@ -38,17 +42,17 @@ const MRZInputModal: React.FC<MRZInputModalProps> = ({ visible, onClose, onSubmi
   const handleSubmit = () => {
     // Basic validation
     if (!documentNumber || documentNumber.length < 5) {
-      Alert.alert('Invalid Input', 'Please enter a valid document number');
+      Alert.alert(t('manual.validationError'), t('manual.documentNumberRequired'));
       return;
     }
     
     if (!dateOfBirth || dateOfBirth.length !== 6) {
-      Alert.alert('Invalid Input', 'Date of birth must be in YYMMDD format (6 digits)');
+      Alert.alert(t('manual.validationError'), t('manual.dateOfBirthFormat'));
       return;
     }
     
     if (!dateOfExpiry || dateOfExpiry.length !== 6) {
-      Alert.alert('Invalid Input', 'Date of expiry must be in YYMMDD format (6 digits)');
+      Alert.alert(t('manual.validationError'), t('manual.dateOfExpiryFormat'));
       return;
     }
     
@@ -72,15 +76,15 @@ const MRZInputModal: React.FC<MRZInputModalProps> = ({ visible, onClose, onSubmi
       onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
-          <Text style={styles.modalTitle}>Enter Passport Details</Text>
+          <Text style={styles.modalTitle}>{t('manual.enterDocumentDetails')}</Text>
           <Text style={styles.modalSubtitle}>
-            Enter the details from your passport's MRZ (Machine Readable Zone)
+            {t('manual.findInformationOnDocument')}
           </Text>
           
           <TextInput
             style={styles.input}
-            placeholder="Document Number"
-            placeholderTextColor="#536471"
+            placeholder={t('manual.documentNumber')}
+            placeholderTextColor={theme.placeholder}
             value={documentNumber}
             onChangeText={setDocumentNumber}
             autoCapitalize="characters"
@@ -89,8 +93,8 @@ const MRZInputModal: React.FC<MRZInputModalProps> = ({ visible, onClose, onSubmi
           
           <TextInput
             style={styles.input}
-            placeholder="Date of Birth (YYMMDD)"
-            placeholderTextColor="#536471"
+            placeholder={`${t('manual.dateOfBirth')} (YYMMDD)`}
+            placeholderTextColor={theme.placeholder}
             value={dateOfBirth}
             onChangeText={setDateOfBirth}
             keyboardType="numeric"
@@ -99,8 +103,8 @@ const MRZInputModal: React.FC<MRZInputModalProps> = ({ visible, onClose, onSubmi
           
           <TextInput
             style={styles.input}
-            placeholder="Date of Expiry (YYMMDD)"
-            placeholderTextColor="#536471"
+            placeholder={`${t('manual.dateOfExpiry')} (YYMMDD)`}
+            placeholderTextColor={theme.placeholder}
             value={dateOfExpiry}
             onChangeText={setDateOfExpiry}
             keyboardType="numeric"
@@ -111,19 +115,18 @@ const MRZInputModal: React.FC<MRZInputModalProps> = ({ visible, onClose, onSubmi
             <TouchableOpacity
               style={[styles.button, styles.cancelButton]}
               onPress={onClose}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+              <Text style={styles.cancelButtonText}>{t('common.cancel')}</Text>
             </TouchableOpacity>
             
             <TouchableOpacity
               style={[styles.button, styles.submitButton]}
               onPress={handleSubmit}>
-              <Text style={styles.submitButtonText}>Scan Passport</Text>
+              <Text style={styles.submitButtonText}>{t('auth.scanPassport')}</Text>
             </TouchableOpacity>
           </View>
           
           <Text style={styles.helpText}>
-            The document number and dates can be found in the two lines of text
-            at the bottom of your passport's photo page.
+            {t('manual.mrzBottomInfo')}
           </Text>
         </View>
       </View>
@@ -131,16 +134,16 @@ const MRZInputModal: React.FC<MRZInputModalProps> = ({ visible, onClose, onSubmi
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ReturnType<typeof useTheme>['theme']) => StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: theme.overlay,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
   modalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.modalBackground,
     borderRadius: 16,
     padding: 24,
     width: '100%',
@@ -149,23 +152,24 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 8,
   },
   modalSubtitle: {
     fontSize: 14,
-    color: '#536471',
+    color: theme.textSecondary,
     marginBottom: 24,
     lineHeight: 20,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#CFD9DE',
+    borderColor: theme.inputBorder,
     borderRadius: 8,
     padding: 12,
     marginBottom: 16,
     fontSize: 16,
-    color: '#0F1419',
+    color: theme.inputText,
+    backgroundColor: theme.inputBackground,
   },
   buttonRow: {
     flexDirection: 'row',
@@ -180,26 +184,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelButton: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.card,
     borderWidth: 1,
-    borderColor: '#CFD9DE',
+    borderColor: theme.border,
   },
   cancelButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#0F1419',
+    color: theme.text,
   },
   submitButton: {
-    backgroundColor: '#000000',
+    backgroundColor: theme.primary,
   },
   submitButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#FFFFFF',
+    color: theme.onPrimary,
   },
   helpText: {
     fontSize: 12,
-    color: '#536471',
+    color: theme.textSecondary,
     marginTop: 16,
     lineHeight: 16,
     textAlign: 'center',

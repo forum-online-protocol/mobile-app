@@ -1,30 +1,33 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
+  Alert,
+  Clipboard,
+  Platform,
   RefreshControl,
   SafeAreaView,
-  Platform,
-  Clipboard,
-  Alert,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { useSelector } from 'react-redux';
 import Icon from '../components/Icon';
 import { RootState } from '../store';
-import { useNavigation } from '../contexts/NavigationContext';
 import { WalletService } from '../services/WalletService';
 import Toast from '../utils/Toast';
 import { useLocalization } from '../hooks/useLocalization';
+import { useTheme } from '../contexts/ThemeContext';
+import { hairlineWidth, monoFontFamily, radii, spacing, typography } from '../styles/tokens';
 
 const WalletScreen: React.FC = () => {
-  const navigation = useNavigation();
   const { t } = useLocalization();
+  const { theme } = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
   const wallet = useSelector((state: RootState) => state.auth.wallet);
   const walletService = WalletService.getInstance();
-  
+
   const [balance, setBalance] = useState('0.0000');
   const [transactions, setTransactions] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -36,18 +39,11 @@ const WalletScreen: React.FC = () => {
   const loadWalletData = async () => {
     setIsLoading(true);
     try {
-      console.log('[WalletScreen] 🔄 Fetching real blockchain balance...');
-      
-      // Fetch actual balance from wallet service (now fetches from blockchain)
       const currentBalance = await walletService.getBalance();
       setBalance(currentBalance);
-      
-      // Don't show mock transactions - will be empty until real transactions are implemented
       setTransactions([]);
-      
-      console.log('[WalletScreen] ✅ Balance updated:', currentBalance, 'ETH');
     } catch (error) {
-      console.error('[WalletScreen] ❌ Error loading wallet data:', error);
+      console.error('[WalletScreen] Failed to load wallet:', error);
       setBalance('0.0000');
     } finally {
       setIsLoading(false);
@@ -59,76 +55,66 @@ const WalletScreen: React.FC = () => {
   };
 
   const copyToClipboard = async () => {
-    if (wallet?.address) {
-      try {
-        await Clipboard.setString(wallet.address);
-        Toast.success(t('wallet.addressCopied'));
-      } catch (error) {
-        console.error('Failed to copy to clipboard:', error);
-        Toast.error(t('wallet.copyFailed'));
-      }
+    if (!wallet?.address) return;
+
+    try {
+      await Clipboard.setString(wallet.address);
+      Toast.success(t('wallet.addressCopied'));
+    } catch {
+      Alert.alert(t('wallet.addressFallbackTitle'), wallet.address);
     }
   };
 
+  const shortAddress = wallet?.address
+    ? `${wallet.address.slice(0, 8)}...${wallet.address.slice(-6)}`
+    : t('wallet.noWallet');
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.safeArea}>
       <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={{ paddingBottom: 120 }}
-        refreshControl={
-          <RefreshControl refreshing={isLoading} onRefresh={onRefresh} />
-        }
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={onRefresh} tintColor={theme.primary} />}
+        showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>{t('wallet.wallet')}</Text>
+          <Text style={styles.title}>{t('wallet.wallet')}</Text>
+          <Text style={styles.subtitle}>{t('wallet.subtitle')}</Text>
         </View>
 
-        {/* Balance Card */}
         <View style={styles.balanceCard}>
           <Text style={styles.balanceLabel}>{t('wallet.totalBalance')}</Text>
-          <Text style={styles.balanceAmount}>{balance} ETH</Text>
-          
+          <Text style={styles.balanceValue}>{balance} ETH</Text>
         </View>
 
-        {/* Address Card */}
-        {wallet && (
-          <View style={styles.addressCard}>
-            <Text style={styles.sectionTitle}>{t('wallet.walletAddress')}</Text>
+        {wallet ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>{t('wallet.walletAddress')}</Text>
             <View style={styles.addressRow}>
-              <Text style={styles.address}>
-                {wallet.address ? `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}` : 'No address'}
-              </Text>
+              <Text style={styles.addressText}>{shortAddress}</Text>
               <TouchableOpacity style={styles.copyButton} onPress={copyToClipboard}>
-                <Icon name="copy" variant="outline" size={20} color="#8B98A5" />
+                <Icon name="copy" variant="outline" size={18} color={theme.textSecondary} />
               </TouchableOpacity>
             </View>
           </View>
-        )}
+        ) : null}
 
-        {/* Transactions */}
-        <View style={styles.transactionsSection}>
-          <Text style={styles.sectionTitle}>{t('wallet.recentTransactions')}</Text>
-          
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>{t('wallet.recentTransactions')}</Text>
+
           {transactions.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>{t('wallet.noTransactions')}</Text>
+            <View style={styles.emptyWrap}>
+              <Icon name="receipt" size={18} color={theme.textTertiary} variant="outline" />
+              <Text style={styles.emptyText}>{t('wallet.noTransactions')}</Text>
             </View>
           ) : (
             transactions.map((tx) => (
-              <View key={tx.id} style={styles.transactionItem}>
-                <View style={styles.transactionDetails}>
-                  <Text style={styles.transactionType}>{tx.type}</Text>
-                  <Text style={styles.transactionTime}>
-                    {new Date(tx.timestamp).toLocaleDateString()}
-                  </Text>
+              <View key={tx.id} style={styles.txRow}>
+                <View style={styles.txMeta}>
+                  <Text style={styles.txType}>{tx.type}</Text>
+                  <Text style={styles.txDate}>{new Date(tx.timestamp).toLocaleDateString()}</Text>
                 </View>
-                <Text style={[
-                  styles.transactionAmount,
-                  { color: tx.type === 'Send' ? '#EF4444' : '#10B981' }
-                ]}>
-                  {tx.amount} ETH
-                </Text>
+                <Text style={[styles.txAmount, { color: tx.type === 'Send' ? theme.error : theme.success }]}>{tx.amount} ETH</Text>
               </View>
             ))
           )}
@@ -138,112 +124,114 @@ const WalletScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
+const createStyles = (theme: ReturnType<typeof useTheme>['theme']) => StyleSheet.create({
+  safeArea: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: theme.background,
   },
-  scrollView: {
+  scroll: {
     flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: spacing.l,
+    paddingTop: spacing.l,
+    paddingBottom: 112,
   },
   header: {
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1C1C1C',
+    marginBottom: spacing.l,
   },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
+  title: {
+    ...typography.title,
+    color: theme.text,
+  },
+  subtitle: {
+    ...typography.body,
+    color: theme.textSecondary,
+    marginTop: spacing.xs,
   },
   balanceCard: {
-    margin: 20,
-    padding: 24,
-    backgroundColor: '#1A1A1A',
-    borderRadius: 16,
-    alignItems: 'center',
+    borderRadius: radii.l,
+    backgroundColor: theme.primary,
+    padding: spacing.xxl,
+    marginBottom: spacing.l,
   },
   balanceLabel: {
-    fontSize: 16,
-    color: '#8B98A5',
-    marginBottom: 8,
+    ...typography.caption,
+    color: theme.primaryLight,
+    marginBottom: spacing.xs,
   },
-  balanceAmount: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 4,
+  balanceValue: {
+    fontSize: 34,
+    fontWeight: '800',
+    color: theme.onPrimary,
   },
-  balanceUsd: {
-    fontSize: 16,
-    color: '#8B98A5',
-    marginBottom: 24,
+  card: {
+    borderRadius: radii.l,
+    borderWidth: hairlineWidth,
+    borderColor: theme.border,
+    backgroundColor: theme.card,
+    padding: spacing.l,
+    marginBottom: spacing.l,
   },
-  addressCard: {
-    margin: 20,
-    marginTop: 0,
-    padding: 20,
-    backgroundColor: '#1A1A1A',
-    borderRadius: 12,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#fff',
-    marginBottom: 12,
+  cardTitle: {
+    ...typography.bodyStrong,
+    color: theme.text,
+    marginBottom: spacing.m,
   },
   addressRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  address: {
-    fontSize: 16,
-    color: '#8B98A5',
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  addressText: {
+    ...typography.body,
+    color: theme.textSecondary,
+    fontFamily: monoFontFamily,
     flex: 1,
   },
   copyButton: {
-    padding: 8,
-    marginLeft: 12,
-  },
-  transactionsSection: {
-    margin: 20,
-    marginTop: 0,
-  },
-  emptyState: {
+    marginLeft: spacing.s,
+    height: 32,
+    width: 32,
+    borderRadius: radii.pill,
     alignItems: 'center',
-    padding: 40,
+    justifyContent: 'center',
   },
-  emptyStateText: {
-    fontSize: 16,
-    color: '#6B7280',
-    marginTop: 12,
+  emptyWrap: {
+    borderTopWidth: hairlineWidth,
+    borderTopColor: theme.divider,
+    paddingTop: spacing.l,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  transactionItem: {
+  emptyText: {
+    ...typography.body,
+    color: theme.textSecondary,
+    marginTop: spacing.s,
+  },
+  txRow: {
+    borderTopWidth: hairlineWidth,
+    borderTopColor: theme.divider,
+    paddingTop: spacing.m,
+    marginTop: spacing.m,
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#1A1A1A',
-    borderRadius: 12,
-    marginBottom: 8,
   },
-  transactionDetails: {
+  txMeta: {
     flex: 1,
   },
-  transactionType: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-    marginBottom: 2,
+  txType: {
+    ...typography.bodyStrong,
+    color: theme.text,
   },
-  transactionTime: {
-    fontSize: 14,
-    color: '#8B98A5',
+  txDate: {
+    ...typography.caption,
+    color: theme.textSecondary,
+    marginTop: 2,
   },
-  transactionAmount: {
-    fontSize: 16,
-    fontWeight: '600',
+  txAmount: {
+    ...typography.bodyStrong,
   },
 });
 

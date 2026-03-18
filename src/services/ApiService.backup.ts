@@ -20,7 +20,7 @@ if (Platform.OS === 'web') {
 }
 
 // API Configuration
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://forum-api-production-42de.up.railway.app';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://api.votta.vote';
 // Diagnostic: log resolved base URL once on module load
 try {
   // eslint-disable-next-line no-console

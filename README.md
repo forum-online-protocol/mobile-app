@@ -39,13 +39,13 @@ Forum is a revolutionary decentralized voting platform that combines cutting-edg
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/forum-protocol/nfc-pass-v2.git
-   cd nfc-pass-v2
+   git clone https://github.com/forum-online-protocol/mobile-app.git
+   cd mobile-app
    ```
 
 2. **Install dependencies**
    ```bash
-   npm install
+   npm ci
    ```
 
 3. **iOS Setup (Mac only)**
@@ -135,9 +135,24 @@ npm run android        # Run on Android device/emulator
 npm run ios           # Run on iOS device/simulator
 npm run lint          # Run ESLint
 npm test              # Run test suite
-npm run build:android # Build Android APK
-npm run build:ios     # Build iOS app
+npm run build:android:release # Build Android release APK
+npm run hash:android:release  # Print SHA-256 for release APK(s)
+npm run verify:android:release # Build + print SHA-256
 ```
+
+### Deterministic Android Build (Verification Flow)
+```bash
+# 1) Install exact locked deps
+npm ci
+
+# 2) Build release APK with a single standard command
+npm run build:android:release
+
+# 3) Print SHA-256 hash(es)
+npm run hash:android:release
+```
+
+Use the SHA-256 checksum from the published GitHub Actions workflow run for the same release/commit as the reference value.
 
 ### API Integration
 The app connects to the Forum API at: `https://forum-api-production-42de.up.railway.app`
@@ -183,7 +198,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Verification
 
 Don't trust, verify. All our code is open for inspection:
-- [Mobile App Source Code](https://github.com/forum-protocol/nfc-pass-v2)
+- [Mobile App Source Code](https://github.com/forum-online-protocol/mobile-app)
 - [Zero-Knowledge Circuits](https://github.com/forum-protocol/zk-circuits)
 - [Smart Contracts](https://github.com/forum-protocol/contracts)
 

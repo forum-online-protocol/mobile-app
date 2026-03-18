@@ -3,6 +3,7 @@ import ApiService from './ApiService';
 import { WalletService } from './WalletService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
+import { buildRegistrationIntent } from '../utils/registrationIntent';
 
 interface AuthResult {
   success: boolean;
@@ -13,6 +14,7 @@ interface AuthResult {
   };
   wallet?: ethers.Wallet | ethers.HDNodeWallet;
   error?: string;
+  registrationDeferred?: boolean;
 }
 
 class AuthService {
@@ -53,47 +55,69 @@ class AuthService {
       // Initialize API service with wallet
       await this.apiService.initialize(wallet);
 
-      // Create passport hash for verification
-      const passportHash = ethers.keccak256(
-        ethers.toUtf8Bytes(JSON.stringify({
-          documentNumber: passportData.documentNumber,
-          dateOfBirth: passportData.dateOfBirth,
-          dateOfExpiry: passportData.dateOfExpiry,
-        }))
+      const registrationIntent = buildRegistrationIntent(
+        passportData,
+        nickname,
+        wallet.address
       );
+      const resolvedNickname = registrationIntent.nickname;
 
-      // Try to get existing user profile
-      const profileResponse = await this.apiService.getUserProfile(wallet.address);
-      
-      if (profileResponse.success && profileResponse.data) {
-        // User exists, return profile
-        return {
-          success: true,
-          user: profileResponse.data,
-          wallet: wallet as any,
-        };
-      }
-
-      // Register new user
-      const registerResponse = await this.apiService.register(nickname, passportHash);
-      
-      if (!registerResponse.success) {
-        return {
-          success: false,
-          error: registerResponse.error || 'Registration failed',
-        };
-      }
+      await this.apiService.setRegistrationIntent(registrationIntent);
+      void this.apiService.ensureRegistration({
+        reason: 'passport-sign-in',
+        background: true,
+      });
 
       // Save auth data
       if (Platform.OS !== 'web') {
         await AsyncStorage.setItem('userAddress', wallet.address);
-        await AsyncStorage.setItem('nickname', nickname);
+        await AsyncStorage.setItem('nickname', resolvedNickname);
       }
+
+      let userProfile = {
+        address: wallet.address,
+        nickname: resolvedNickname,
+        isVerified: true,
+      };
+
+      try {
+        const profileResponse = await this.apiService.getUserProfile(wallet.address);
+        if (profileResponse.success && profileResponse.data) {
+          userProfile = profileResponse.data;
+        }
+      } catch (profileError) {
+        console.warn('Profile fetch skipped during optimistic passport login:', profileError);
+      }
+
+      const optimisticDisplayName = [
+        String(passportData?.firstName || '').trim(),
+        String(passportData?.lastName || '').trim(),
+      ]
+        .filter(Boolean)
+        .join('_')
+        .trim();
+      await this.apiService.primeCurrentProfileCache(
+        {
+          profile: {
+            ...userProfile,
+            username: String((userProfile as any)?.username || resolvedNickname)
+              .trim()
+              .replace(/^@+/, '')
+              .toLowerCase(),
+            displayName:
+              String((userProfile as any)?.displayName || optimisticDisplayName)
+                .trim() || resolvedNickname,
+            source: (userProfile as any)?.source || 'optimistic-cache',
+          },
+        },
+        { address: wallet.address }
+      );
 
       return {
         success: true,
-        user: registerResponse.data,
+        user: userProfile,
         wallet: wallet as any,
+        registrationDeferred: true,
       };
     } catch (error: any) {
       console.error('Authentication error:', error);

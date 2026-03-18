@@ -10,12 +10,14 @@ import {
 import { useSelector } from 'react-redux';
 import { RootState } from '../store';
 import Icon from '../components/Icon';
+import { useLocalization } from '../hooks/useLocalization';
 
 interface WalletScreenProps {
   navigation?: any;
 }
 
 const WalletScreen: React.FC<WalletScreenProps> = ({ navigation }) => {
+  const { t } = useLocalization();
   const wallet = useSelector((state: RootState) => state.auth.wallet);
   const [balance] = useState('0.125');
   const [refreshing, setRefreshing] = useState(false);
@@ -25,15 +27,15 @@ const WalletScreen: React.FC<WalletScreenProps> = ({ navigation }) => {
       id: '1',
       type: 'received',
       amount: '0.05',
-      from: 'Democracy Vote Reward',
-      timestamp: '2 hours ago'
+      from: t('walletWeb.demoVoteReward'),
+      timestamp: t('walletWeb.time.hoursAgo', { count: 2 })
     },
     {
       id: '2', 
       type: 'sent',
       amount: '0.02',
-      to: 'Forum Tip',
-      timestamp: '1 day ago'
+      to: t('walletWeb.demoForumTip'),
+      timestamp: t('walletWeb.time.daysAgo', { count: 1 })
     }
   ];
 
@@ -41,13 +43,13 @@ const WalletScreen: React.FC<WalletScreenProps> = ({ navigation }) => {
     <SafeAreaView style={styles.container}>
       <ScrollView>
         <View style={styles.balanceCard}>
-          <Text style={styles.balanceLabel}>ETH Balance</Text>
+          <Text style={styles.balanceLabel}>{t('walletWeb.ethBalance')}</Text>
           <Text style={styles.balanceAmount}>{balance} ETH</Text>
           <Text style={styles.balanceUsd}>≈ $245.50 USD</Text>
           
           <View style={styles.qrPlaceholder}>
             <Text style={styles.qrText}>📱</Text>
-            <Text style={styles.qrLabel}>Wallet Address QR</Text>
+            <Text style={styles.qrLabel}>{t('walletWeb.walletQr')}</Text>
             <Text style={styles.addressText}>0x742d...a8f3</Text>
           </View>
         </View>
@@ -55,22 +57,22 @@ const WalletScreen: React.FC<WalletScreenProps> = ({ navigation }) => {
         <View style={styles.actionsCard}>
           <TouchableOpacity style={styles.actionButton}>
             <Icon name="arrow-up-right" size={20} color="#1D9BF0" variant="outline" />
-            <Text style={styles.actionText}>Send</Text>
+            <Text style={styles.actionText}>{t('walletWeb.send')}</Text>
           </TouchableOpacity>
           
           <TouchableOpacity style={styles.actionButton}>
             <Icon name="arrow-down-left" size={20} color="#00BA7C" variant="outline" />
-            <Text style={styles.actionText}>Receive</Text>
+            <Text style={styles.actionText}>{t('walletWeb.receive')}</Text>
           </TouchableOpacity>
           
           <TouchableOpacity style={styles.actionButton}>
             <Icon name="ballot" size={20} color="#FF6B35" variant="outline" />
-            <Text style={styles.actionText}>Vote</Text>
+            <Text style={styles.actionText}>{t('walletWeb.vote')}</Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.transactionsCard}>
-          <Text style={styles.sectionTitle}>Recent Transactions</Text>
+          <Text style={styles.sectionTitle}>{t('walletWeb.recentTransactions')}</Text>
           
           {transactions.map((tx) => (
             <View key={tx.id} style={styles.transactionItem}>
@@ -79,7 +81,7 @@ const WalletScreen: React.FC<WalletScreenProps> = ({ navigation }) => {
               </View>
               <View style={styles.transactionInfo}>
                 <Text style={styles.transactionTitle}>
-                  {tx.type === 'received' ? tx.from : `To ${tx.to}`}
+                  {tx.type === 'received' ? tx.from : t('walletWeb.toRecipient', { recipient: tx.to })}
                 </Text>
                 <Text style={styles.transactionTime}>{tx.timestamp}</Text>
               </View>
@@ -94,7 +96,7 @@ const WalletScreen: React.FC<WalletScreenProps> = ({ navigation }) => {
         </View>
       </ScrollView>
       
-      <Text style={styles.webNote}>Web version - Full wallet features available on mobile</Text>
+      <Text style={styles.webNote}>{t('walletWeb.webNote')}</Text>
     </SafeAreaView>
   );
 };

@@ -87,7 +87,7 @@ export interface UserProfile {
     postsLiked?: number;
     lastActive?: string;
   };
-  source?: 'blockchain' | 'mock' | 'generated';
+  source?: "blockchain" | "mock" | "generated";
   passportHash?: string;
   createdAt?: string;
 }
@@ -99,19 +99,57 @@ export interface VoteOption {
   percentage?: number;
 }
 
+export type SupportedAppLanguage = "en" | "ru" | "ua";
+
+export interface PostLocalization {
+  sourceLanguage: SupportedAppLanguage;
+  titleTranslations?: Partial<Record<SupportedAppLanguage, string>>;
+  contentTranslations?: Partial<Record<SupportedAppLanguage, string>>;
+  translationStatus?: "source_only" | "complete" | "failed" | string;
+  lastTranslatedAt?: string;
+}
+
 export interface VoteRestrictions {
   minAge?: number;
   maxAge?: number;
   allowedNationalities?: string[]; // ISO country codes
   excludedNationalities?: string[]; // ISO country codes
   residencyRequired?: boolean;
-  verificationLevel?: 'passport' | 'id' | 'any';
+  verificationLevel?: "passport" | "id" | "any";
+}
+
+export interface LotteryConfig {
+  enabled: boolean;
+  asset?: "ETH";
+  oddsNumerator: number;
+  oddsDenominator: number;
+  payoutMode: "fixed" | "share";
+  fixedAmountEth?: string;
+  shareBps?: number;
+  claimWindowSeconds: number;
+  maxWinners: number;
+  maxEntriesPerWallet: number;
+  contractAddress?: string;
+  deploymentTxHash?: string;
+  deployedAt?: string;
+  deployStatus?: "pending" | "deployed" | "failed";
+  deployError?: string;
 }
 
 export interface Post {
   id: string;
-  author: Pick<User, 'id' | 'username' | 'displayName' | 'avatar' | 'isVerified' | 'address'>;
+  submissionId?: string;
+  legacySource?: string;
+  isReadOnlyLegacy?: boolean;
+  author: Pick<
+    User,
+    "id" | "username" | "displayName" | "avatar" | "isVerified" | "address"
+  >;
+  title?: string;
   content: string;
+  localizedTitle?: string;
+  localizedContent?: string;
+  localization?: PostLocalization | null;
   media?: string[];
   poll?: Poll;
   voteData?: {
@@ -127,6 +165,17 @@ export interface Post {
   requiresVerification?: boolean; // Whether passport verification is required
   eligibilityRoot?: string; // Merkle root for eligible combinations
   restrictions?: VoteRestrictions; // Legacy format
+  lottery?: LotteryConfig | null;
+  lotteryAddress?: string | null;
+  transactionHash?: string | null;
+  batchPublisherAddress?: string | null;
+  batchPaymasterAddress?: string | null;
+  blockchain?: {
+    status?: "pending" | "confirmed" | "failed";
+    transactionHash?: string;
+    error?: string;
+    attemptedAt?: string;
+  };
   likes: number;
   dislikes?: number;
   reposts: number;
@@ -142,6 +191,18 @@ export interface Post {
   isAnonymous?: boolean;
   type?: string;
   comments?: number;
+  status?: string;
+  ipfsHash?: string;
+  replyTo?: number;
+  isPending?: boolean;
+  isPendingModeration?: boolean;
+  moderationStatus?: {
+    status?: string;
+    label?: string;
+    reviewedBy?: string | null;
+    reviewedAt?: string | null;
+    rejectionReason?: string | null;
+  };
 }
 
 export interface Poll {
@@ -166,8 +227,8 @@ export interface Transaction {
   from: string;
   to: string;
   value: string;
-  type: 'send' | 'receive' | 'tip';
-  status: 'pending' | 'confirmed' | 'failed';
+  type: "send" | "receive" | "tip";
+  status: "pending" | "confirmed" | "failed";
   timestamp: string;
   gasUsed?: string;
   gasPrice?: string;
@@ -184,6 +245,6 @@ export interface Vote {
 export class NFCError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'NFCError';
+    this.name = "NFCError";
   }
 }

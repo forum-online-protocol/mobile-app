@@ -20,7 +20,8 @@ export type IconName =
   | 'send' | 'card-outline' | 'arrow-up-right'
   | 'arrow-down-left' | 'shield' | 'sparkles' | 'link'
   | 'cog' | 'receipt' | 'time' | 'location' | 'people'
-  | 'thumbs-up' | 'thumbs-down' | 'copy';
+  | 'thumbs-up' | 'thumbs-down' | 'copy'
+  | 'info' | 'passport' | 'shield-checkmark' | 'language';
 
 interface IconProps {
   name: IconName;
@@ -44,6 +45,7 @@ const IONICON_NAMES: Record<string, { outline: string; filled: string; sharp?: s
   'ballot': { outline: 'list-outline', filled: 'list' },
   'ellipsis-horizontal': { outline: 'ellipsis-horizontal-outline', filled: 'ellipsis-horizontal' },
   'warning': { outline: 'warning-outline', filled: 'warning' },
+  'info': { outline: 'information-circle-outline', filled: 'information-circle' },
   'chevron-right': { outline: 'chevron-forward-outline', filled: 'chevron-forward' },
   'chevron-down': { outline: 'chevron-down-outline', filled: 'chevron-down' },
   'arrow-up': { outline: 'arrow-up-outline', filled: 'arrow-up' },
@@ -75,6 +77,9 @@ const IONICON_NAMES: Record<string, { outline: string; filled: string; sharp?: s
   'bulb': { outline: 'bulb-outline', filled: 'bulb' },
   'link': { outline: 'link-outline', filled: 'link' },
   'shield': { outline: 'shield-outline', filled: 'shield' },
+  'shield-checkmark': { outline: 'shield-checkmark-outline', filled: 'shield-checkmark' },
+  'passport': { outline: 'card-outline', filled: 'card' },
+  'language': { outline: 'language-outline', filled: 'language' },
   'sparkles': { outline: 'sparkles-outline', filled: 'sparkles' },
   'cog': { outline: 'cog-outline', filled: 'cog' },
   'people': { outline: 'people-outline', filled: 'people' },
@@ -96,6 +101,7 @@ const EMOJI_FALLBACK: Record<string, string> = {
   'ballot': '📋',
   'ellipsis-horizontal': '•••',
   'warning': '⚠️',
+  'info': 'ℹ️',
   'chevron-right': '›',
   'chevron-down': '⌄',
   'arrow-up': '↑',
@@ -127,6 +133,9 @@ const EMOJI_FALLBACK: Record<string, string> = {
   'bulb': '💡',
   'link': '🔗',
   'shield': '🛡️',
+  'shield-checkmark': '🛡️',
+  'passport': '🛂',
+  'language': '🌐',
   'sparkles': '✨',
   'cog': '⚙️',
   'receipt': '🧾',

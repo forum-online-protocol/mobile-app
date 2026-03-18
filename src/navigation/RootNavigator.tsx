@@ -1,129 +1,168 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import Icon from '../components/Icon';
 import { useSelector } from 'react-redux';
 import { RootState } from '../store';
 import { useNavigation } from '../contexts/NavigationContext';
 import { useLocalization } from '../hooks/useLocalization';
+import { useTheme } from '../contexts/ThemeContext';
+import { hairlineWidth } from '../styles/tokens';
+import { AUTH_FLOW_ROUTES, PROTECTED_ROUTES, ROUTES } from './routes';
 
 // Screens
-import SplashScreen from '../screens/SplashScreen';
 import AuthScreen from '../screens/AuthScreen';
 import OnboardingScreen from '../screens/OnboardingScreen';
 import PassportScanScreen from '../screens/PassportScanScreen';
 import BiometricSetupScreen from '../screens/BiometricSetupScreen';
 import FeedScreen from '../screens/FeedScreen';
-// Use regular wallet screen
 import WalletScreen from '../screens/WalletScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import PostCreateScreen from '../screens/PostCreateScreen';
 import TransactionScreen from '../screens/TransactionScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import TransactionLogScreen from '../screens/TransactionLogScreen';
 import UserProfileScreen from '../screens/UserProfileScreen';
 import PostDetailScreen from '../screens/PostDetailScreen';
 import MRZScannerScreen from '../screens/MRZScannerScreen';
 import MRZManualInputScreen from '../screens/MRZManualInputScreen';
 
+const TAB_ROUTES = new Set([ROUTES.FEED, ROUTES.WALLET, ROUTES.PROFILE]);
+
 const MainTabNavigator = () => {
   const { currentScreen, navigate, params } = useNavigation();
   const { t } = useLocalization();
+  const { theme } = useTheme();
   const passportData = useSelector((state: RootState) => state.auth.passportData);
-  const isGuest = !passportData; // Guest if no passport data
-  
-  // Determine active tab based on current screen
+  const sessionType = useSelector((state: RootState) => state.auth.sessionType);
+
+  const isGuest = sessionType === 'guest';
+
   const getActiveTab = () => {
-    if (['Feed'].includes(currentScreen)) return 'Feed';
-    if (!isGuest && ['Wallet', 'Transaction'].includes(currentScreen)) return 'Wallet';
-    if (!isGuest && ['Profile', 'Settings'].includes(currentScreen)) return 'Profile';
-    // UserProfile, PostCreate, PostDetail, and other screens don't highlight any tab
+    if ([ROUTES.FEED].includes(currentScreen)) return ROUTES.FEED;
+    if ([ROUTES.WALLET, ROUTES.TRANSACTION].includes(currentScreen)) return ROUTES.WALLET;
+    if ([ROUTES.PROFILE, ROUTES.SETTINGS, ROUTES.TRANSACTION_LOG].includes(currentScreen)) {
+      return ROUTES.PROFILE;
+    }
     return null;
   };
-  
+
   const activeTab = getActiveTab();
 
-  const renderScreen = () => {
+  const renderAuthFlowScreen = () => {
     switch (currentScreen) {
-      case 'Feed':
-        return <FeedScreen />;
-      case 'Wallet':
-        return <WalletScreen />;
-      case 'Profile':
-        return <ProfileScreen />;
-      case 'Settings':
-        return <SettingsScreen />;
-      case 'UserProfile':
-        return <UserProfileScreen />;
-      case 'Transaction':
-        return <TransactionScreen />;
-      case 'PostCreate':
-        return <PostCreateScreen />;
-      case 'PostDetail':
-        return <PostDetailScreen route={{ params }} />;
-      case 'PassportScan':
-        return <PassportScanScreen />;
-      case 'BiometricSetup':
-        return <BiometricSetupScreen />;
-      case 'Onboarding':
+      case ROUTES.AUTH:
+        return <AuthScreen />;
+      case ROUTES.ONBOARDING:
         return <OnboardingScreen />;
-      case 'MRZScanner':
+      case ROUTES.PASSPORT_SCAN:
+      case ROUTES.PASSPORT_SCAN_SCREEN:
+        return <PassportScanScreen />;
+      case ROUTES.BIOMETRIC_SETUP:
+        return <BiometricSetupScreen />;
+      case ROUTES.MRZ_SCANNER:
+      case ROUTES.MRZ_SCANNER_SCREEN:
         return <MRZScannerScreen />;
-      case 'MRZManualInput':
+      case ROUTES.MRZ_MANUAL_INPUT:
+      case ROUTES.MRZ_MANUAL_INPUT_SCREEN:
         return <MRZManualInputScreen />;
-      case 'MRZManualInputScreen':
-        return <MRZManualInputScreen />;
+      default:
+        return <AuthScreen />;
+    }
+  };
+
+  const renderScreen = () => {
+    // Keep auth/KYC flows explicit and tab-free
+    if (AUTH_FLOW_ROUTES.has(currentScreen)) {
+      return renderAuthFlowScreen();
+    }
+
+    // Protect signed-only routes
+    if (isGuest && PROTECTED_ROUTES.has(currentScreen)) {
+      return <AuthScreen />;
+    }
+
+    switch (currentScreen) {
+      case ROUTES.FEED:
+        return <FeedScreen />;
+      case ROUTES.WALLET:
+        return <WalletScreen />;
+      case ROUTES.PROFILE:
+        return <ProfileScreen />;
+      case ROUTES.SETTINGS:
+        return <SettingsScreen />;
+      case ROUTES.TRANSACTION_LOG:
+        return <TransactionLogScreen />;
+      case ROUTES.USER_PROFILE:
+        return <UserProfileScreen />;
+      case ROUTES.TRANSACTION:
+        return <TransactionScreen />;
+      case ROUTES.POST_CREATE:
+        return <PostCreateScreen />;
+      case ROUTES.POST_DETAIL:
+        return <PostDetailScreen route={{ params }} />;
       default:
         return <FeedScreen />;
     }
   };
 
+  const showTabBar = !isGuest && TAB_ROUTES.has(currentScreen);
+
   return (
-    <View style={styles.container}>
-      <View style={styles.content}>
-        {renderScreen()}
-      </View>
-      {!isGuest && (
-        <View style={styles.tabBar}>
+    <View style={[styles.container, { backgroundColor: theme.background }]}> 
+      <View style={styles.content}>{renderScreen()}</View>
+
+      {showTabBar && (
+        <View style={[styles.tabBar, { backgroundColor: theme.tabBarBackground, borderTopColor: theme.border }]}> 
           <TouchableOpacity
             style={styles.tabItem}
-            onPress={() => navigate('Feed')}
+            onPress={() => navigate(ROUTES.FEED)}
+            accessibilityRole="tab"
+            accessibilityLabel={t('navigation.home')}
+            accessibilityState={{ selected: activeTab === ROUTES.FEED }}
           >
             <Icon
               name="home"
-              variant="filled"
+              variant={activeTab === ROUTES.FEED ? 'filled' : 'outline'}
               size={20}
-              color={activeTab === 'Feed' ? '#1DA1F2' : '#8B98A5'}
+              color={activeTab === ROUTES.FEED ? theme.primary : theme.textTertiary}
             />
-            <Text style={[styles.tabLabel, { color: activeTab === 'Feed' ? '#1DA1F2' : '#8B98A5' }]}>
+            <Text style={[styles.tabLabel, { color: activeTab === ROUTES.FEED ? theme.primary : theme.textTertiary }]}> 
               {t('navigation.home')}
             </Text>
           </TouchableOpacity>
-          
+
           <TouchableOpacity
             style={styles.tabItem}
-            onPress={() => navigate('Wallet')}
+            onPress={() => navigate(ROUTES.WALLET)}
+            accessibilityRole="tab"
+            accessibilityLabel={t('navigation.wallet')}
+            accessibilityState={{ selected: activeTab === ROUTES.WALLET }}
           >
             <Icon
               name="wallet"
-              variant="filled"
+              variant={activeTab === ROUTES.WALLET ? 'filled' : 'outline'}
               size={20}
-              color={activeTab === 'Wallet' ? '#1DA1F2' : '#8B98A5'}
+              color={activeTab === ROUTES.WALLET ? theme.primary : theme.textTertiary}
             />
-            <Text style={[styles.tabLabel, { color: activeTab === 'Wallet' ? '#1DA1F2' : '#8B98A5' }]}>
+            <Text style={[styles.tabLabel, { color: activeTab === ROUTES.WALLET ? theme.primary : theme.textTertiary }]}> 
               {t('navigation.wallet')}
             </Text>
           </TouchableOpacity>
-          
+
           <TouchableOpacity
             style={styles.tabItem}
-            onPress={() => navigate('Profile')}
+            onPress={() => navigate(ROUTES.PROFILE)}
+            accessibilityRole="tab"
+            accessibilityLabel={t('navigation.profile')}
+            accessibilityState={{ selected: activeTab === ROUTES.PROFILE }}
           >
             <Icon
               name="person"
-              variant="filled"
+              variant={activeTab === ROUTES.PROFILE ? 'filled' : 'outline'}
               size={20}
-              color={activeTab === 'Profile' ? '#1DA1F2' : '#8B98A5'}
+              color={activeTab === ROUTES.PROFILE ? theme.primary : theme.textTertiary}
             />
-            <Text style={[styles.tabLabel, { color: activeTab === 'Profile' ? '#1DA1F2' : '#8B98A5' }]}>
+            <Text style={[styles.tabLabel, { color: activeTab === ROUTES.PROFILE ? theme.primary : theme.textTertiary }]}> 
               {t('navigation.profile')}
             </Text>
           </TouchableOpacity>
@@ -134,80 +173,19 @@ const MainTabNavigator = () => {
 };
 
 const RootNavigator = () => {
-  const isAuthenticated = useSelector((state: RootState) => state.auth.isAuthenticated);
-  const passportData = useSelector((state: RootState) => state.auth.passportData);
-  const { currentScreen } = useNavigation();
-
-  console.log('[RootNavigator] Current screen:', currentScreen, 'Authenticated:', isAuthenticated, 'Has passport:', !!passportData);
-
-  // Auth screens that don't show tabs (but only if user is not authenticated)
-  const authScreens = ['Auth', 'Onboarding', 'PassportScan', 'PassportScanScreen', 'BiometricSetup', 'NFCDebug', 'MRZScanner', 'MRZScannerScreen'];
-  
-  // If not authenticated, show auth screens only when explicitly navigating to them
-  if (!isAuthenticated && authScreens.includes(currentScreen)) {
-    console.log('[RootNavigator] User not authenticated, showing specific auth screen:', currentScreen);
-    // Show auth flow screens without tabs
-    switch (currentScreen) {
-      case 'Auth':
-        return <AuthScreen />;
-      case 'Onboarding':
-        return <OnboardingScreen />;
-      case 'PassportScan':
-        return <PassportScanScreen />;
-      case 'PassportScanScreen':
-        return <PassportScanScreen />;
-      case 'BiometricSetup':
-        return <BiometricSetupScreen />;
-      case 'NFCDebug':
-        return <NFCDebugScreen />;
-      case 'MRZScanner':
-        return <MRZScannerScreen />;
-      case 'MRZScannerScreen':
-        return <MRZScannerScreen />;
-      default:
-        return <AuthScreen />;
-    }
-  }
-
-  // If authenticated but on specific auth screens (like Auth, MRZ scanner)
-  const specialScreens = ['Auth', 'PassportScan', 'PassportScanScreen', 'BiometricSetup', 'MRZScanner', 'MRZScannerScreen'];
-  if (isAuthenticated && specialScreens.includes(currentScreen)) {
-    console.log('[RootNavigator] Authenticated user on special screen:', currentScreen);
-    switch (currentScreen) {
-      case 'Auth':
-        return <AuthScreen />;
-      case 'PassportScan':
-        return <PassportScanScreen />;
-      case 'PassportScanScreen':
-        return <PassportScanScreen />;
-      case 'BiometricSetup':
-        return <BiometricSetupScreen />;
-      case 'MRZScanner':
-        return <MRZScannerScreen />;
-      case 'MRZScannerScreen':
-        return <MRZScannerScreen />;
-      default:
-        return <MainTabNavigator />;
-    }
-  }
-
-  // Default: show main app with tabs
   return <MainTabNavigator />;
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
   },
   content: {
     flex: 1,
   },
   tabBar: {
     flexDirection: 'row',
-    backgroundColor: '#000',
-    borderTopWidth: 1,
-    borderTopColor: '#1C1C1C',
+    borderTopWidth: hairlineWidth,
     paddingBottom: 5,
     paddingTop: 5,
     height: 60,
@@ -216,10 +194,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  tabItemCentered: {
-    // When guest mode, center the home tab
-    marginHorizontal: 'auto',
   },
   tabLabel: {
     fontSize: 12,

@@ -1,17 +1,15 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   Modal,
   StyleSheet,
-  Dimensions,
   Platform,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { supportedLanguages, saveLanguagePreference } from '../localization/i18n';
-
-const { width } = Dimensions.get('window');
+import { useTheme } from '../contexts/ThemeContext';
 
 interface LanguageSelectorProps {
   style?: any;
@@ -25,6 +23,8 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   showLabel = true 
 }) => {
   const { t, i18n } = useTranslation();
+  const { theme } = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [isModalVisible, setIsModalVisible] = useState(false);
 
   const currentLanguage = i18n.language;
@@ -118,17 +118,17 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ReturnType<typeof useTheme>['theme']) => StyleSheet.create({
   languageButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    backgroundColor: theme.card,
     borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: '#E1E8ED',
-    shadowColor: '#000',
+    borderColor: theme.border,
+    shadowColor: theme.text,
     shadowOffset: {
       width: 0,
       height: 1,
@@ -141,16 +141,16 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   languageText: {
-    color: '#0F1419',
+    color: theme.text,
     fontWeight: '500',
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: theme.overlay,
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.modalBackground,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingBottom: Platform.OS === 'ios' ? 34 : 20,
@@ -163,24 +163,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#EFF3F4',
+    borderBottomColor: theme.border,
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#0F1419',
+    color: theme.text,
   },
   closeButton: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#F7F9FA',
+    backgroundColor: theme.surface,
     justifyContent: 'center',
     alignItems: 'center',
   },
   closeButtonText: {
     fontSize: 16,
-    color: '#536471',
+    color: theme.textSecondary,
     fontWeight: '600',
   },
   languageList: {
@@ -198,20 +198,20 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   selectedLanguage: {
-    backgroundColor: '#F0F8FF',
+    backgroundColor: theme.surface,
   },
   languageOptionText: {
     fontSize: 16,
-    color: '#0F1419',
+    color: theme.text,
     fontWeight: '500',
   },
   selectedLanguageText: {
-    color: '#1D9BF0',
+    color: theme.primary,
     fontWeight: '600',
   },
   checkmark: {
     fontSize: 16,
-    color: '#1D9BF0',
+    color: theme.primary,
     fontWeight: '600',
   },
 });

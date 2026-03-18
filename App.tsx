@@ -6,13 +6,15 @@ import { store } from './src/store';
 import { Text, View, ActivityIndicator, StatusBar, Platform } from 'react-native';
 import RootNavigator from './src/navigation/RootNavigator';
 import { testAsyncStorage } from './src/utils/testAsyncStorage';
-import { ThemeProvider } from './src/contexts/ThemeContext';
+import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import { NavigationProvider } from './src/contexts/NavigationContext';
 import DeepLinkService from './src/services/DeepLinkService';
 import AsyncStorageService from './src/services/AsyncStorageService';
-import { setPassportData, setAuthenticated, setWallet } from './src/store/authSlice';
+import { setPassportData, setAuthenticated, setWallet, setGuestSession } from './src/store/authSlice';
 import { WalletService } from './src/services/WalletService';
+import { DemoService } from './src/services/DemoService';
 import { VersionCheckService } from './src/services/VersionCheckService';
+import { ROUTES } from './src/navigation/routes';
 import './src/localization/i18n'; // Initialize localization
 
 const loadStoredAuthData = async (): Promise<boolean> => {
@@ -70,7 +72,7 @@ const App: React.FC = () => {
   console.log('[App] App component initializing - timestamp:', Date.now());
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [initialScreen, setInitialScreen] = useState<string>('Auth');
+  const [initialScreen, setInitialScreen] = useState<string>(ROUTES.FEED);
 
   useEffect(() => {
     // Simple initialization
@@ -118,12 +120,11 @@ const App: React.FC = () => {
           }
           
           console.log('[App] User has valid auth data - starting at Feed screen');
-          setInitialScreen('Feed');
+          setInitialScreen(ROUTES.FEED);
         } else {
-          console.log('[App] No valid auth data - setting up guest mode and starting on Feed screen');
-          // Set guest authentication (authenticated but no passport data)
-          store.dispatch(setAuthenticated(true));
-          setInitialScreen('Feed');
+          console.log('[App] No valid auth data - setting up guest session on Feed screen');
+          store.dispatch(setGuestSession());
+          setInitialScreen(ROUTES.FEED);
         }
         
         // Just wait a moment for things to settle
@@ -159,16 +160,27 @@ const App: React.FC = () => {
     );
   }
 
+  const AppShell = () => {
+    const { theme, isDark } = useTheme();
+
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.background }}>
+        <StatusBar
+          barStyle={isDark ? 'light-content' : 'dark-content'}
+          backgroundColor={theme.background}
+        />
+        <RootNavigator />
+      </View>
+    );
+  };
+
   // Main app with navigation and theme
   return (
     <Provider store={store}>
       <RootSiblingParent>
         <ThemeProvider>
           <NavigationProvider initialScreen={initialScreen}>
-            <View style={{ flex: 1 }}>
-              <StatusBar barStyle="light-content" backgroundColor="#000" />
-              <RootNavigator />
-            </View>
+            <AppShell />
           </NavigationProvider>
         </ThemeProvider>
       </RootSiblingParent>

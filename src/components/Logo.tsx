@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, Image } from 'react-native';
+import { useTheme } from '../contexts/ThemeContext';
 // import Icon from './Icon';
 
 interface LogoProps {
@@ -13,6 +14,8 @@ const Logo: React.FC<LogoProps> = ({
   color = 'black',
   showText = true 
 }) => {
+  const { theme } = useTheme();
+
   const sizes = {
     small: { icon: 24, text: 20 },
     medium: { icon: 32, text: 28 },
@@ -20,9 +23,10 @@ const Logo: React.FC<LogoProps> = ({
   };
 
   const colors = {
-    primary: { icon: '#1D9BF0', text: '#000000' },
-    white: { icon: '#FFFFFF', text: '#17559e' },
-    black: { icon: '#0F1419', text: '#000000' },
+    // Keep logo neutral in both themes: dark -> white, light -> black.
+    primary: { icon: theme.text, text: theme.text },
+    white: { icon: '#FFFFFF', text: '#FFFFFF' },
+    black: { icon: theme.text, text: theme.text },
   };
 
   const currentSize = sizes[size];
@@ -35,7 +39,8 @@ const Logo: React.FC<LogoProps> = ({
         style={{
           width: currentSize.icon,
           height: currentSize.icon,
-          resizeMode: 'contain'
+          resizeMode: 'contain',
+          tintColor: currentColor.icon,
         }}
       />
       {showText && (

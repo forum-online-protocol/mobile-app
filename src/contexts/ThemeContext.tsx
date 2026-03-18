@@ -23,6 +23,7 @@ export interface Theme {
   primary: string;
   primaryLight: string;
   primaryDark: string;
+  onPrimary: string;
   
   // Status colors
   success: string;
@@ -62,6 +63,7 @@ const lightTheme: Theme = {
   primary: '#1DA1F2',
   primaryLight: '#71C9F8',
   primaryDark: '#1A8CD8',
+  onPrimary: '#FFFFFF',
   
   // Status colors
   success: '#4CAF50',
@@ -101,6 +103,7 @@ const darkTheme: Theme = {
   primary: '#1DA1F2',
   primaryLight: '#71C9F8',
   primaryDark: '#1A8CD8',
+  onPrimary: '#FFFFFF',
   
   // Status colors
   success: '#4CAF50',
@@ -109,7 +112,7 @@ const darkTheme: Theme = {
   info: '#2196F3',
   
   // Special
-  overlay: 'rgba(255, 255, 255, 0.1)',
+  overlay: 'rgba(0, 0, 0, 0.6)',
   modalBackground: '#16181C',
   tabBarBackground: '#000000',
   headerBackground: '#000000',

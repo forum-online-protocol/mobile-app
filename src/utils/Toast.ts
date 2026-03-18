@@ -1,4 +1,5 @@
 import { Platform, Alert } from 'react-native';
+import i18n from '../localization/i18n';
 
 // Simple Toast implementation using console and optional alerts
 class ToastManager {
@@ -10,7 +11,7 @@ class ToastManager {
     if (this.shouldShowAlerts && Platform.OS !== 'web') {
       // Only show alerts for critical success messages
       if (message.includes('vote') || message.includes('balance')) {
-        Alert.alert('✅ Success', message);
+        Alert.alert(i18n.t('toast.successTitle'), message);
       }
     }
     return null;
@@ -21,7 +22,7 @@ class ToastManager {
     console.error('❌ [Toast Error]:', message);
     if (Platform.OS !== 'web') {
       // Always show error alerts as they're important
-      Alert.alert('❌ Error', message);
+      Alert.alert(i18n.t('toast.errorTitle'), message);
     }
     return null;
   }
@@ -30,7 +31,7 @@ class ToastManager {
   static warning(message: string, options = {}) {
     console.warn('⚠️ [Toast Warning]:', message);
     if (this.shouldShowAlerts && Platform.OS !== 'web') {
-      Alert.alert('⚠️ Warning', message);
+      Alert.alert(i18n.t('toast.warningTitle'), message);
     }
     return null;
   }

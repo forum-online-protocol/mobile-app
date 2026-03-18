@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,14 +12,18 @@ import {
   Modal,
 } from 'react-native';
 import { useDispatch } from 'react-redux';
-import { setWallet, setPassportData, setAuthenticated } from '../store/authSlice';
+import { setWallet, setPassportData } from '../store/authSlice';
 import { fetchFeed } from '../store/socialSlice';
-import { WalletService } from '../services/WalletService';
+import AuthService from '../services/AuthService';
 import { useNavigation } from '../contexts/NavigationContext';
 import Logo from '../components/Logo';
 import Icon from '../components/Icon';
 import PassportReader from '../services/PassportReader';
+import AsyncStorageService from '../services/AsyncStorageService';
 import { useTranslation } from 'react-i18next';
+import { PassportData } from '../types';
+import { useTheme } from '../contexts/ThemeContext';
+import { hairlineWidth, monoFontFamily, radii } from '../styles/tokens';
 
 interface MRZData {
   documentNumber: string;
@@ -31,8 +35,10 @@ const PassportScanScreen: React.FC = () => {
   const { t } = useTranslation();
   const dispatch = useDispatch();
   const navigation = useNavigation();
+  const { theme, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const { params } = navigation;
-  const walletService = WalletService.getInstance();
+  const authService = AuthService.getInstance();
 
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,23 +47,88 @@ const PassportScanScreen: React.FC = () => {
   const [progress, setProgress] = useState(0);
   const [showSuccessDialog, setShowSuccessDialog] = useState(false);
   const [passportResult, setPassportResult] = useState<any>(null);
+  const [isResolvingMrz, setIsResolvingMrz] = useState(true);
 
   const { navigate, goBack } = navigation;
 
-  useEffect(() => {
-    console.log('[PassportScanScreen] Component mounted');
+  const convertPassportData = (readerData: any): PassportData => {
+    const personalData = readerData.personalData || {};
     
-    // Check if MRZ data was passed from scanner
-    if (params?.mrzData) {
-      console.log('[PassportScan] Received MRZ data:', params.mrzData);
-      setMrzData(params.mrzData);
-    } else {
-      console.warn('[PassportScan] No MRZ data received');
+    return {
+      documentType: personalData.documentType || 'P',
+      issuingCountry: personalData.issuingState || '',
+      documentNumber: personalData.documentNumber || '',
+      nationality: personalData.nationality || '',
+      dateOfBirth: personalData.dateOfBirth || '',
+      sex: personalData.gender || '',
+      gender: personalData.gender || '',
+      dateOfExpiry: personalData.dateOfExpiry || '',
+      personalNumber: '',
+      firstName: personalData.firstName || '',
+      lastName: personalData.lastName || '',
+      dataGroups: {
+        DG1: readerData.dg1Error ? { error: readerData.dg1Error } : {},
+        DG2: readerData.dg2Error ? { error: readerData.dg2Error } : {}
+      }
+    };
+  };
+
+  useEffect(() => {
+    let active = true;
+
+    const resolveMrzData = async () => {
+      console.log('[PassportScanScreen] Component mounted');
+      console.log('[PassportScanScreen] Navigation params:', params);
+
+      if (params?.mrzData) {
+        console.log('[PassportScan] Received MRZ data from navigation:', params.mrzData);
+        if (active) {
+          setMrzData(params.mrzData);
+          setIsResolvingMrz(false);
+        }
+        return;
+      }
+
+      try {
+        const storedMrz = await AsyncStorageService.getItem('mrz_data');
+        if (!active) {
+          return;
+        }
+
+        if (storedMrz) {
+          const parsedMrz = JSON.parse(storedMrz);
+          if (
+            parsedMrz &&
+            typeof parsedMrz.documentNumber === 'string' &&
+            typeof parsedMrz.dateOfBirth === 'string' &&
+            typeof parsedMrz.dateOfExpiry === 'string'
+          ) {
+            console.log('[PassportScan] Recovered MRZ data from storage fallback');
+            setMrzData(parsedMrz);
+            setIsResolvingMrz(false);
+            return;
+          }
+        }
+      } catch (storageError) {
+        console.warn('[PassportScan] Failed to restore MRZ data from storage:', storageError);
+      }
+
+      if (!active) {
+        return;
+      }
+
+      setIsResolvingMrz(false);
       Alert.alert(t('passport.error'), t('passport.noMrzDataReceived'), [
         { text: t('common.ok'), onPress: () => goBack() }
       ]);
-    }
-  }, [params]);
+    };
+
+    void resolveMrzData();
+
+    return () => {
+      active = false;
+    };
+  }, [goBack, params, t]);
 
 
   const startPassportScan = async () => {
@@ -73,8 +144,8 @@ const PassportScanScreen: React.FC = () => {
 
     try {
       console.log('[PassportScan] Starting passport scan with MRZ data:', mrzData);
+      console.log('[PassportScan] PassportReader service:', PassportReader);
       
-      // Show scanning progress with status updates
       setScanStatus(t('passport.searchingForNfcPassport'));
       setProgress(20);
       
@@ -84,6 +155,7 @@ const PassportScanScreen: React.FC = () => {
       setScanStatus(t('passport.connectingToPassportChip'));
       setProgress(40);
       
+      console.log('[PassportScan] Calling PassportReader.readPassport...');
       const passportData = await PassportReader.readPassport(
         mrzData.documentNumber,
         mrzData.dateOfBirth,
@@ -98,21 +170,30 @@ const PassportScanScreen: React.FC = () => {
       setScanStatus(t('passport.verifyingPassportAuthenticity'));
       setProgress(80);
 
-      // Generate wallet from passport data
-      try {
-        setScanStatus(t('passport.generatingSecureWallet'));
-        setProgress(90);
-        
-        const walletData = await walletService.generateWalletFromPassport(passportData);
-        dispatch(setWallet(walletData));
-        console.log('[PassportScan] Wallet created:', walletData.address);
-      } catch (walletError) {
-        console.error('[PassportScan] Wallet generation error:', walletError);
+      const convertedPassportData = convertPassportData(passportData);
+      console.log('[PassportScan] Converted passport data:', convertedPassportData);
+
+      // Generate wallet and enter app immediately. On-chain registration syncs in background
+      setScanStatus(t('passport.registeringOnChainIdentity'));
+      setProgress(90);
+      const fallbackNickname = [
+        convertedPassportData.firstName || 'user',
+        convertedPassportData.lastName || '',
+      ]
+        .join('_')
+        .trim();
+      const authResult = await authService.authenticateWithPassport(
+        convertedPassportData,
+        fallbackNickname
+      );
+      if (!authResult.success || !authResult.wallet) {
+        throw new Error(authResult.error || 'On-chain registration failed');
       }
+      dispatch(setWallet(authResult.wallet as any));
+      console.log('[PassportScan] Wallet created and registered:', (authResult.wallet as any).address);
 
       // Store complete passport data in Redux and AsyncStorage
-      dispatch(setPassportData(passportData));
-      dispatch(setAuthenticated(true));
+      dispatch(setPassportData(convertedPassportData));
 
       // Refetch feed after authentication
       await dispatch(fetchFeed({} as any) as any);
@@ -120,8 +201,8 @@ const PassportScanScreen: React.FC = () => {
 
       // Store complete passport data in AsyncStorage for persistence
       try {
-        const AsyncStorageService = require('../services/AsyncStorageService').default;
         await AsyncStorageService.setItem('passport_data', JSON.stringify(passportData));
+        await AsyncStorageService.removeItem('mrz_data');
         console.log('[PassportScan] Complete passport data stored in AsyncStorage');
       } catch (storageError) {
         console.error('[PassportScan] Failed to store passport data:', storageError);
@@ -140,14 +221,36 @@ const PassportScanScreen: React.FC = () => {
       
     } catch (error: any) {
       console.error('[PassportScan] Error:', error);
-      setError(error.message || 'Failed to read passport');
+      
+      let errorMessage = error.message || t('passport.couldNotReadPassportNfc');
+      
+      if (errorMessage.includes('NFC is not available')) {
+        if (errorMessage.includes('Simulator')) {
+          errorMessage = t('passport.nfcUnavailableSimulator');
+        } else if (errorMessage.includes('iOS 13')) {
+          errorMessage = t('passport.nfcUnavailableIosVersion');
+        } else if (errorMessage.includes('disabled')) {
+          errorMessage = t('passport.nfcUnavailableDisabled');
+        } else {
+          errorMessage = t('passport.nfcUnavailableDevice');
+        }
+      }
+      
+      if (errorMessage.includes('Simulator')) {
+        console.log('[PassportScan] NFC Test Info:');
+        console.log('[PassportScan] - MRZ scanning works in simulator');
+        console.log('[PassportScan] - NFC reading requires real device');
+        console.log('[PassportScan] - Use iPhone 7+ or iPad Pro for NFC testing');
+      }
+      
+      setError(errorMessage);
       setIsScanning(false);
       setScanStatus('');
       setProgress(0);
       
       Alert.alert(
         t('auth.scanFailed'),
-        t('passport.couldNotReadPassportNfc'),
+        errorMessage || t('passport.couldNotReadPassportNfc'),
         [{ text: t('common.ok') }]
       );
     }
@@ -156,7 +259,7 @@ const PassportScanScreen: React.FC = () => {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={theme.background} />
       
       {/* Header with small logo */}
       <View style={styles.header}>
@@ -194,7 +297,7 @@ const PassportScanScreen: React.FC = () => {
           <View style={styles.processContainer}>
             <View style={styles.processStep}>
               <View style={[styles.stepIndicator, styles.completedStep]}>
-                <Text style={[styles.stepNumber, {color: '#FFFFFF'}]}>✓</Text>
+                <Text style={[styles.stepNumber, {color: theme.onPrimary}]}>✓</Text>
               </View>
               <Text style={styles.stepTitle}>{t('passport.scanMrz')}</Text>
               <Text style={styles.stepDescription}>{t('passport.cameraScanCompleted')}</Text>
@@ -204,7 +307,7 @@ const PassportScanScreen: React.FC = () => {
             
             <View style={styles.processStep}>
               <View style={[styles.stepIndicator, styles.activeStep]}>
-                <Text style={[styles.stepNumber, {color: '#FFFFFF'}]}>2</Text>
+                <Text style={[styles.stepNumber, {color: theme.onPrimary}]}>2</Text>
               </View>
               <Text style={styles.stepTitle}>{t('passport.nfcRead')}</Text>
               <Text style={styles.stepDescription}>{t('passport.verifyWithChip')}</Text>
@@ -224,17 +327,25 @@ const PassportScanScreen: React.FC = () => {
           {/* Scan Button */}
           <TouchableOpacity
             onPress={startPassportScan}
-            disabled={isScanning}
+            disabled={isScanning || isResolvingMrz || !mrzData}
             activeOpacity={0.8}
-            style={[styles.primaryButton, isScanning && styles.buttonDisabled]}>
+            style={[
+              styles.primaryButton,
+              (isScanning || isResolvingMrz || !mrzData) && styles.buttonDisabled,
+            ]}>
             {isScanning ? (
               <>
-                <ActivityIndicator size="small" color="#FFFFFF" style={{marginRight: 8}} />
+                <ActivityIndicator size="small" color={theme.onPrimary} style={{marginRight: 8}} />
                 <Text style={styles.buttonText}>{t('passport.readingPassport')}</Text>
+              </>
+            ) : isResolvingMrz ? (
+              <>
+                <ActivityIndicator size="small" color={theme.onPrimary} style={{marginRight: 8}} />
+                <Text style={styles.buttonText}>{t('common.loading')}</Text>
               </>
             ) : (
               <>
-                <Icon name="send" variant="filled" size={20} color="#FFFFFF" style={{marginRight: 8}} />
+                <Icon name="send" variant="filled" size={20} color={theme.onPrimary} style={{marginRight: 8}} />
                 <Text style={styles.buttonText}>{t('passport.startNfcScan')}</Text>
               </>
             )}
@@ -255,13 +366,25 @@ const PassportScanScreen: React.FC = () => {
                 <Text style={styles.nfcInstructionText}>• {t('passport.steadyAndStill')}</Text>
                 <Text style={styles.nfcInstructionText}>• {t('passport.closeToPassportChip')}</Text>
               </View>
+              
+              {/* Cancel Button */}
+              <TouchableOpacity
+                onPress={() => {
+                  setIsScanning(false);
+                  setError(t('passport.scanCancelledByUser'));
+                  setScanStatus('');
+                  setProgress(0);
+                }}
+                style={styles.cancelButton}>
+                <Text style={styles.cancelButtonText}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
             </View>
           )}
 
           {/* Error Display */}
           {error && (
             <View style={styles.errorContainer}>
-              <Icon name="warning" variant="filled" size={24} color="#FFA500" style={{marginBottom: 8}} />
+              <Icon name="warning" variant="filled" size={24} color={theme.warning} style={{marginBottom: 8}} />
               <Text style={styles.errorTitle}>
                 {error.includes('0x6985') || error.includes('CONDITIONS NOT SATISFIED')
                   ? t('passport.authenticationFailed')
@@ -308,6 +431,19 @@ const PassportScanScreen: React.FC = () => {
               • {t('passport.doNotMove')}
             </Text>
           </View>
+
+          {/* NFC Info for Simulator */}
+          {Platform.OS === 'ios' && (
+            <View style={[styles.infoContainer, { backgroundColor: theme.surface, borderColor: theme.warning }]}>
+              <Text style={[styles.infoTitle, { color: theme.textSecondary }]}>{t('passport.simulatorTestingTitle')}</Text>
+              <Text style={[styles.infoText, { color: theme.textSecondary }]}>
+                • {t('passport.simulatorTestingLine1')}{'\n'}
+                • {t('passport.simulatorTestingLine2')}{'\n'}
+                • {t('passport.simulatorTestingLine3')}{'\n'}
+                • {t('passport.simulatorTestingLine4')}
+              </Text>
+            </View>
+          )}
         </View>
 
       </ScrollView>
@@ -327,10 +463,10 @@ const PassportScanScreen: React.FC = () => {
               <View style={styles.passportInfo}>
                 <Text style={styles.passportInfoTitle}>{t('passport.verifiedIdentity')}</Text>
                 <Text style={styles.passportInfoText}>
-                  {t('passport.name')}: {passportResult.personalData?.firstName || 'N/A'} {passportResult.personalData?.lastName || 'N/A'}
+                  {t('passport.name')}: {passportResult.personalData?.firstName || t('profile.notAvailable')} {passportResult.personalData?.lastName || t('profile.notAvailable')}
                 </Text>
                 <Text style={styles.passportInfoText}>
-                  {t('passport.nationality')}: {passportResult.personalData?.nationality || 'N/A'}
+                  {t('passport.nationality')}: {passportResult.personalData?.nationality || t('profile.notAvailable')}
                 </Text>
               </View>
             )}
@@ -343,7 +479,7 @@ const PassportScanScreen: React.FC = () => {
                   setPassportResult(null);
                   // Reset to allow rescanning
                 }}>
-                <Icon name="refresh" variant="filled" size={20} color="#1D9BF0" style={{marginRight: 8}} />
+                <Icon name="refresh" variant="filled" size={20} color={theme.primary} style={{marginRight: 8}} />
                 <Text style={styles.rescanButtonText}>{t('passport.rescan')}</Text>
               </TouchableOpacity>
               
@@ -353,7 +489,7 @@ const PassportScanScreen: React.FC = () => {
                   setShowSuccessDialog(false);
                   navigate('Feed');
                 }}>
-                <Icon name="checkmark" variant="filled" size={20} color="#FFFFFF" style={{marginRight: 8}} />
+                <Icon name="checkmark" variant="filled" size={20} color={theme.onPrimary} style={{marginRight: 8}} />
                 <Text style={styles.continueButtonText}>{t('passport.continue')}</Text>
               </TouchableOpacity>
             </View>
@@ -364,10 +500,10 @@ const PassportScanScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ReturnType<typeof useTheme>['theme']) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.background,
   },
   header: {
     flexDirection: 'row',
@@ -376,16 +512,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'ios' ? 60 : 40,
     paddingBottom: 10,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#EFF3F4',
+    backgroundColor: theme.headerBackground,
+    borderBottomWidth: hairlineWidth,
+    borderBottomColor: theme.border,
   },
   backButton: {
     padding: 8,
   },
   backButtonText: {
     fontSize: 16,
-    color: '#1D9BF0',
+    color: theme.primary,
     fontWeight: '600',
   },
   scrollContainer: {
@@ -403,13 +539,13 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '800',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 8,
     textAlign: 'center',
   },
   subtitle: {
     fontSize: 16,
-    color: '#536471',
+    color: theme.textSecondary,
     textAlign: 'center',
     marginBottom: 32,
   },
@@ -428,66 +564,66 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: theme.border,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 8,
   },
   activeStep: {
-    backgroundColor: '#1D9BF0',
+    backgroundColor: theme.primary,
   },
   completedStep: {
-    backgroundColor: '#10B981',
+    backgroundColor: theme.success,
   },
   stepNumber: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#9CA3AF',
+    color: theme.textTertiary,
   },
   stepTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 4,
     textAlign: 'center',
   },
   stepDescription: {
     fontSize: 12,
-    color: '#536471',
+    color: theme.textSecondary,
     textAlign: 'center',
   },
   processLine: {
     flex: 0.3,
     height: 2,
-    backgroundColor: '#10B981',
+    backgroundColor: theme.success,
     marginHorizontal: 10,
     marginBottom: 40,
   },
   mrzDataContainer: {
-    backgroundColor: '#F0F9FF',
+    backgroundColor: theme.surface,
     borderRadius: 16,
     padding: 16,
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: '#BAE6FD',
+    borderColor: theme.border,
   },
   mrzTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 12,
   },
   mrzText: {
     fontSize: 14,
-    color: '#0369A1',
+    color: theme.primaryDark,
     marginBottom: 4,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontFamily: monoFontFamily,
   },
   primaryButton: {
-    backgroundColor: '#000000',
+    backgroundColor: theme.primary,
     paddingVertical: 16,
     paddingHorizontal: 32,
-    borderRadius: 9999,
+    borderRadius: radii.pill,
     alignItems: 'center',
     marginBottom: 24,
     flexDirection: 'row',
@@ -499,110 +635,123 @@ const styles = StyleSheet.create({
   buttonText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: theme.onPrimary,
+  },
+  cancelButton: {
+    backgroundColor: theme.error,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: theme.onPrimary,
   },
   errorContainer: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: theme.surface,
     borderRadius: 16,
     padding: 16,
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: '#FCA5A5',
+    borderColor: theme.error,
   },
   errorTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#DC2626',
+    color: theme.error,
     marginBottom: 8,
   },
   errorText: {
     fontSize: 14,
-    color: '#DC2626',
+    color: theme.error,
     lineHeight: 20,
     textAlign: 'center',
   },
   errorSuggestions: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.card,
     borderRadius: 8,
     padding: 12,
     marginTop: 12,
     width: '100%',
   },
   suggestionTitle: {
-    color: '#991B1B',
+    color: theme.error,
     fontWeight: '600',
     marginBottom: 8,
     fontSize: 14,
   },
   suggestionText: {
-    color: '#7F1D1D',
+    color: theme.error,
     fontSize: 13,
     marginVertical: 2,
     lineHeight: 18,
   },
   retryButton: {
-    backgroundColor: '#DC2626',
+    backgroundColor: theme.error,
     borderRadius: 8,
     paddingHorizontal: 24,
     paddingVertical: 12,
     marginTop: 16,
   },
   retryButtonText: {
-    color: '#FFFFFF',
+    color: theme.onPrimary,
     fontWeight: '600',
     fontSize: 14,
   },
   infoContainer: {
-    backgroundColor: '#F7F9FA',
+    backgroundColor: theme.surface,
     borderRadius: 16,
     padding: 16,
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: '#EFF3F4',
+    borderColor: theme.border,
   },
   infoTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 12,
   },
   infoText: {
     fontSize: 14,
-    color: '#536471',
+    color: theme.textSecondary,
     lineHeight: 20,
   },
   scanningContainer: {
-    backgroundColor: '#F0F9FF',
+    backgroundColor: theme.surface,
     borderRadius: 16,
     padding: 20,
     marginVertical: 16,
     borderWidth: 1,
-    borderColor: '#BAE6FD',
+    borderColor: theme.border,
     alignItems: 'center',
   },
   scanningStatus: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#0369A1',
+    color: theme.primaryDark,
     marginBottom: 12,
     textAlign: 'center',
   },
   progressBar: {
     width: '100%',
     height: 8,
-    backgroundColor: '#E0F2FE',
+    backgroundColor: theme.border,
     borderRadius: 4,
     overflow: 'hidden',
     marginBottom: 8,
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#0EA5E9',
+    backgroundColor: theme.primary,
     borderRadius: 4,
   },
   progressText: {
     fontSize: 14,
-    color: '#0369A1',
+    color: theme.primaryDark,
     fontWeight: '600',
     marginBottom: 16,
   },
@@ -613,23 +762,23 @@ const styles = StyleSheet.create({
   nfcInstructionTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 8,
   },
   nfcInstructionText: {
     fontSize: 13,
-    color: '#536471',
+    color: theme.textSecondary,
     marginBottom: 4,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: theme.overlay,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
   successDialog: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.modalBackground,
     borderRadius: 20,
     padding: 24,
     width: '100%',
@@ -639,34 +788,34 @@ const styles = StyleSheet.create({
   successTitle: {
     fontSize: 24,
     fontWeight: '800',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 8,
     textAlign: 'center',
   },
   successMessage: {
     fontSize: 16,
-    color: '#536471',
+    color: theme.textSecondary,
     textAlign: 'center',
     marginBottom: 20,
   },
   passportInfo: {
-    backgroundColor: '#F0F9FF',
+    backgroundColor: theme.surface,
     borderRadius: 12,
     padding: 16,
     width: '100%',
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: '#BAE6FD',
+    borderColor: theme.border,
   },
   passportInfoTitle: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#0369A1',
+    color: theme.primaryDark,
     marginBottom: 8,
   },
   passportInfoText: {
     fontSize: 14,
-    color: '#0369A1',
+    color: theme.primaryDark,
     marginBottom: 4,
   },
   dialogButtons: {
@@ -678,29 +827,31 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 9999,
+    borderRadius: radii.pill,
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'center',
   },
   rescanButton: {
-    backgroundColor: '#F7F9FA',
+    backgroundColor: theme.surface,
     borderWidth: 1,
-    borderColor: '#1D9BF0',
+    borderColor: theme.primary,
   },
   rescanButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#1D9BF0',
+    color: theme.primary,
   },
   continueButton: {
-    backgroundColor: '#000000',
+    backgroundColor: theme.primary,
   },
   continueButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#FFFFFF',
+    color: theme.onPrimary,
   },
 });
 
 export default PassportScanScreen;
+
+

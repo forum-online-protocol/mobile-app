@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -12,9 +12,11 @@ import {
   KeyboardAvoidingView,
 } from 'react-native';
 import { useNavigation } from '../contexts/NavigationContext';
+import AsyncStorageService from '../services/AsyncStorageService';
 import { useTranslation } from 'react-i18next';
 import Logo from '../components/Logo';
 import Icon from '../components/Icon';
+import { useTheme } from '../contexts/ThemeContext';
 
 interface MRZData {
   documentNumber: string;
@@ -25,6 +27,8 @@ interface MRZData {
 const MRZManualInputScreen: React.FC = () => {
   const { t } = useTranslation();
   const navigation = useNavigation();
+  const { theme, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [documentNumber, setDocumentNumber] = useState('');
   const [dateOfBirth, setDateOfBirth] = useState('');
   const [dateOfExpiry, setDateOfExpiry] = useState('');
@@ -37,19 +41,19 @@ const MRZManualInputScreen: React.FC = () => {
     if (!documentNumber.trim()) {
       newErrors.documentNumber = t('manual.documentNumberRequired');
     } else if (documentNumber.length < 5) {
-      newErrors.documentNumber = 'Document number must be at least 5 characters';
+      newErrors.documentNumber = t('manual.documentNumberMinLength');
     }
     
     // Date of birth validation
     if (!dateOfBirth.trim()) {
-      newErrors.dateOfBirth = 'Date of birth is required';
+      newErrors.dateOfBirth = t('manual.dateOfBirthRequired');
     } else if (!dateOfBirth.match(/^\d{6}$/)) {
       newErrors.dateOfBirth = t('manual.dateOfBirthFormat');
     }
     
     // Date of expiry validation
     if (!dateOfExpiry.trim()) {
-      newErrors.dateOfExpiry = 'Date of expiry is required';
+      newErrors.dateOfExpiry = t('manual.dateOfExpiryRequired');
     } else if (!dateOfExpiry.match(/^\d{6}$/)) {
       newErrors.dateOfExpiry = t('manual.dateOfExpiryFormat');
     }
@@ -58,7 +62,7 @@ const MRZManualInputScreen: React.FC = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!validateInput()) {
       return;
     }
@@ -70,6 +74,12 @@ const MRZManualInputScreen: React.FC = () => {
     };
 
     console.log('[MRZManualInputScreen] Submitting MRZ data:', mrzData);
+
+    try {
+      await AsyncStorageService.setItem('mrz_data', JSON.stringify(mrzData));
+    } catch (error) {
+      console.warn('[MRZManualInputScreen] Failed to persist MRZ data:', error);
+    }
     
     // Navigate to PassportScanScreen with MRZ data
     navigation.navigate('PassportScanScreen', { 
@@ -90,15 +100,17 @@ const MRZManualInputScreen: React.FC = () => {
     <KeyboardAvoidingView 
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={theme.background} />
       
       {/* Header */}
       <View style={styles.header}>
         <Logo size="small" color="primary" />
         <TouchableOpacity
           onPress={() => navigation.goBack()}
-          style={styles.backButton}>
-          <Icon name="arrow-back" variant="outline" size={24} color="#1D9BF0" />
+          style={styles.backButton}
+          accessibilityRole="button"
+          accessibilityLabel={t('manual.backToMrzScanner')}>
+          <Icon name="arrow-back" variant="outline" size={24} color={theme.primary} />
         </TouchableOpacity>
       </View>
 
@@ -113,13 +125,13 @@ const MRZManualInputScreen: React.FC = () => {
             <Text style={styles.mrzLine}>P&lt;USADOE&lt;&lt;JOHN&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</Text>
             <View style={styles.mrzHighlights}>
               <View style={[styles.highlight, styles.highlightDoc]}>
-                <Text style={styles.highlightLabel}>Doc Number</Text>
+                <Text style={styles.highlightLabel}>{t('manual.docNumberLabel')}</Text>
               </View>
               <View style={[styles.highlight, styles.highlightDob]}>
-                <Text style={styles.highlightLabel}>Birth Date</Text>
+                <Text style={styles.highlightLabel}>{t('manual.birthDateLabel')}</Text>
               </View>
               <View style={[styles.highlight, styles.highlightExp]}>
-                <Text style={styles.highlightLabel}>Expiry Date</Text>
+                <Text style={styles.highlightLabel}>{t('manual.expiryDateLabel')}</Text>
               </View>
             </View>
             <Text style={styles.mrzLine}>L898902C36USA7408122M1204159ZE184226B&lt;&lt;&lt;&lt;&lt;10</Text>
@@ -129,7 +141,7 @@ const MRZManualInputScreen: React.FC = () => {
         {/* Title */}
         <Text style={styles.title}>{t('manual.enterDocumentDetails')}</Text>
         <Text style={styles.subtitle}>
-          Enter the information exactly as it appears in your passport's MRZ
+          {t('manual.subtitleEnterExactly')}
         </Text>
 
         {/* Input Fields */}
@@ -146,7 +158,7 @@ const MRZManualInputScreen: React.FC = () => {
                 }
               }}
               placeholder="L898902C3"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={theme.placeholder}
               autoCapitalize="characters"
               maxLength={9}
             />
@@ -169,7 +181,7 @@ const MRZManualInputScreen: React.FC = () => {
                 }
               }}
               placeholder="740812"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={theme.placeholder}
               keyboardType="numeric"
               maxLength={6}
             />
@@ -192,7 +204,7 @@ const MRZManualInputScreen: React.FC = () => {
                 }
               }}
               placeholder="120415"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={theme.placeholder}
               keyboardType="numeric"
               maxLength={6}
             />
@@ -210,7 +222,7 @@ const MRZManualInputScreen: React.FC = () => {
           <Text style={styles.infoText}>
             • {t('instructions.forPassports')}{'\n'}
             • {t('instructions.forIdCards')}{'\n'}
-            • The information is in the MRZ at the bottom of the page
+            • {t('manual.mrzBottomInfo')}
           </Text>
         </View>
 
@@ -219,14 +231,18 @@ const MRZManualInputScreen: React.FC = () => {
           <TouchableOpacity
             onPress={handleSubmit}
             style={styles.primaryButton}
-            activeOpacity={0.8}>
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={t('manual.continueToPassportScan')}>
             <Text style={styles.primaryButtonText}>{t('common.continue')}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={() => navigation.goBack()}
             style={styles.secondaryButton}
-            activeOpacity={0.8}>
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.back')}>
             <Text style={styles.secondaryButtonText}>{t('common.back')}</Text>
           </TouchableOpacity>
         </View>
@@ -235,10 +251,10 @@ const MRZManualInputScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ReturnType<typeof useTheme>['theme']) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.background,
   },
   header: {
     flexDirection: 'row',
@@ -247,9 +263,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'ios' ? 60 : 40,
     paddingBottom: 10,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.background,
     borderBottomWidth: 1,
-    borderBottomColor: '#EFF3F4',
+    borderBottomColor: theme.border,
   },
   backButton: {
     padding: 8,
@@ -264,17 +280,17 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   visualGuide: {
-    backgroundColor: '#F8F9FA',
+    backgroundColor: theme.surface,
     borderRadius: 12,
     padding: 16,
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: theme.border,
   },
   visualTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 12,
     textAlign: 'center',
   },
@@ -304,7 +320,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     padding: 2,
     borderWidth: 1,
-    borderColor: '#1D9BF0',
+    borderColor: theme.primary,
   },
   highlightDoc: {
     position: 'absolute',
@@ -323,19 +339,19 @@ const styles = StyleSheet.create({
   },
   highlightLabel: {
     fontSize: 8,
-    color: '#1D9BF0',
+    color: theme.primary,
     fontWeight: '600',
   },
   title: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 8,
     textAlign: 'center',
   },
   subtitle: {
     fontSize: 14,
-    color: '#536471',
+    color: theme.textSecondary,
     textAlign: 'center',
     marginBottom: 24,
     lineHeight: 20,
@@ -349,58 +365,58 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 8,
   },
   textInput: {
-    backgroundColor: '#F7F9FA',
+    backgroundColor: theme.surface,
     borderWidth: 2,
-    borderColor: '#EFF3F4',
+    borderColor: theme.border,
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 16,
-    color: '#0F1419',
+    color: theme.text,
     fontWeight: '500',
   },
   inputError: {
-    borderColor: '#DC2626',
+    borderColor: theme.error,
   },
   inputHint: {
     fontSize: 12,
-    color: '#536471',
+    color: theme.textSecondary,
     marginTop: 6,
   },
   errorText: {
     fontSize: 12,
-    color: '#DC2626',
+    color: theme.error,
     marginTop: 6,
     fontWeight: '500',
   },
   infoContainer: {
-    backgroundColor: '#F7F9FA',
+    backgroundColor: theme.surface,
     borderRadius: 12,
     padding: 16,
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: '#EFF3F4',
+    borderColor: theme.border,
   },
   infoTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#0F1419',
+    color: theme.text,
     marginBottom: 8,
   },
   infoText: {
     fontSize: 14,
-    color: '#536471',
+    color: theme.textSecondary,
     lineHeight: 20,
   },
   buttonContainer: {
     gap: 12,
   },
   primaryButton: {
-    backgroundColor: '#000000',
+    backgroundColor: theme.primary,
     paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 9999,
@@ -409,22 +425,23 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: theme.onPrimary,
   },
   secondaryButton: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.card,
     paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 9999,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#CFD9DE',
+    borderColor: theme.border,
   },
   secondaryButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#536471',
+    color: theme.textSecondary,
   },
 });
 
 export default MRZManualInputScreen;
+
