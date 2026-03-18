@@ -154,6 +154,15 @@ npm run hash:android:release
 
 Use the SHA-256 checksum from the published GitHub Actions workflow run for the same release/commit as the reference value.
 
+### Published Checksum Source
+
+- Workflow: `.github/workflows/android-release-verifiable.yml`
+- On tag push `v*`, CI:
+  - builds release APK,
+  - generates `SHA256SUMS.txt`,
+  - uploads `android-release-with-checksum` artifact,
+  - attaches APK + `SHA256SUMS.txt` to the GitHub Release assets for that tag.
+
 ### API Integration
 The app connects to the Forum API at: `https://forum-api-production-42de.up.railway.app`
 
