@@ -290,6 +290,8 @@ docs/
 *.gz
 *.iso
 *.jar
+!android/gradle/wrapper/gradle-wrapper.jar
+!android/gradle/wrapper/gradle-wrapper.properties
 *.rar
 *.tar
 *.zip
